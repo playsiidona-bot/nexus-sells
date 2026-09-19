@@ -11,10 +11,14 @@ from bot.database.models import User, Product, Order, Category, ProductStock, Su
 from bot.database.crud import (
     create_category, add_product_stock_items, get_and_clear_restock_subscribers,
     get_ticket_by_code, replace_key_for_ticket, refund_ticket, reject_ticket,
-    get_product_by_id
+    get_product_by_id, get_setting, set_setting
 )
-from bot.keyboards.inline import admin_main_keyboard
-from bot.config import ADMIN_IDS, OWNER_ID, BASE_CURRENCY
+from bot.keyboards.inline import admin_main_keyboard, admin_settings_keyboard
+from bot.config import (
+    ADMIN_IDS, OWNER_ID, BASE_CURRENCY, TELEBIRR_RECEIVER_PHONE,
+    TELEBIRR_RECEIVER_NAME, CBE_ACCOUNT_NUMBER, CBE_ACCOUNT_NAME,
+    FORCE_JOIN_CHANNEL, REVIEWS_CHANNEL_ID
+)
 
 router = Router()
 
@@ -24,6 +28,12 @@ class AdminStates(StatesGroup):
     waiting_stock_prod_id = State()
     waiting_stock_keys = State()
     waiting_broadcast_text = State()
+    waiting_welcome_text = State()
+    waiting_rules_text = State()
+    waiting_telebirr = State()
+    waiting_cbe = State()
+    waiting_fjoin = State()
+    waiting_revchan = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -302,3 +312,153 @@ async def process_broadcast_message(message: Message, state: FSMContext):
 
     await progress.edit_text(f"✅ ማስታወቂያው ለ <b>{sent}/{len(users)}</b> ተጠቃሚዎች ተልኳል!", parse_mode="HTML")
     await state.clear()
+
+
+# =====================================================================
+# IN-CHAT BOT SETTINGS & CUSTOMIZATION
+# =====================================================================
+
+@router.callback_query(F.data == "adm_main_menu")
+async def back_to_admin_main(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    text = "⚙️ <b>Nexus Hub Admin Suite</b>\n\nየቦቱን ዕቃዎች፣ ክምችት፣ ማስታወቂያዎችና አጠቃላይ ስታትስቲክስ ከዚህ ማስተዳደር ይችላሉ።"
+    await call.message.edit_text(text, reply_markup=admin_main_keyboard(), parse_mode="HTML")
+    await call.answer()
+
+
+@router.callback_query(F.data == "adm_settings")
+async def open_settings_menu(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+
+    maint = await get_setting("maintenance_mode", "0") == "1"
+    kb = admin_settings_keyboard(maintenance_on=maint)
+    text = (
+        "⚙️ <b>Bot Settings & UI Customization:</b>\n\n"
+        "ከዚህ ክፍል የቦቱን ጽሁፎች፣ የክፍያ ስልኮች፣ የማስገደጃና የሪቪው ቻናሎችን ሳያጠፉ በቅጽበት ማስተካከል ይችላሉ።"
+    )
+    await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await call.answer()
+
+
+@router.callback_query(F.data == "adm_toggle_maint")
+async def toggle_maintenance(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+
+    curr = await get_setting("maintenance_mode", "0")
+    new_val = "0" if curr == "1" else "1"
+    await set_setting("maintenance_mode", new_val, "Toggle maintenance mode")
+
+    kb = admin_settings_keyboard(maintenance_on=(new_val == "1"))
+    status_label = "🔴 በርቷል (ON)" if new_val == "1" else "⚪ ጠፍቷል (OFF)"
+    await call.message.edit_text(
+        f"🛠️ <b>Maintenance Mode: {status_label}</b>\n\nሁኔታው በተሳካ ሁኔታ ተቀይሯል።",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+    await call.answer(f"Maintenance: {status_label}", show_alert=False)
+
+
+@router.callback_query(F.data == "adm_set_welcome")
+async def start_set_welcome(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await call.message.answer("📝 አዲሱን የቦቱን <b>የመግቢያ መልእክት (Welcome Text)</b> ይላኩ:\n<i>(HTML tags መጠቀም ይችላሉ)</i>", parse_mode="HTML")
+    await state.set_state(AdminStates.waiting_welcome_text)
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_welcome_text)
+async def process_welcome_text(message: Message, state: FSMContext):
+    new_text = message.html_text or message.text
+    await set_setting("welcome_text", new_text, "Custom welcome message")
+    await message.answer("✅ <b>የመግቢያ መልእክቱ በተሳካ ሁኔታ ተቀይሯል!</b>", parse_mode="HTML")
+    await state.clear()
+
+
+@router.callback_query(F.data == "adm_set_rules")
+async def start_set_rules(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await call.message.answer("📜 አዲሱን <b>የቦቱ ደንቦችና መመሪያ (Rules/About Us)</b> ይላኩ:", parse_mode="HTML")
+    await state.set_state(AdminStates.waiting_rules_text)
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_rules_text)
+async def process_rules_text(message: Message, state: FSMContext):
+    new_text = message.html_text or message.text
+    await set_setting("rules_text", new_text, "Custom rules")
+    await message.answer("✅ <b>የቦቱ መመሪያ ጽሁፍ በተሳካ ሁኔታ ተቀይሯል!</b>", parse_mode="HTML")
+    await state.clear()
+
+
+@router.callback_query(F.data == "adm_set_telebirr")
+async def start_set_telebirr(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await call.message.answer("📱 አዲሱን የቴሌብር <b>ስልክ ቁጥር እና ስም</b> በዚህ ፎርማት ይላኩ:\n<code>0912345678, Nexus Digital</code>", parse_mode="HTML")
+    await state.set_state(AdminStates.waiting_telebirr)
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_telebirr)
+async def process_telebirr(message: Message, state: FSMContext):
+    text = message.text.strip()
+    await set_setting("telebirr_account", text, "Telebirr account details")
+    await message.answer(f"✅ የቴሌብር መረጃ ወደ <code>{text}</code> ተቀይሯል!", parse_mode="HTML")
+    await state.clear()
+
+
+@router.callback_query(F.data == "adm_set_cbe")
+async def start_set_cbe(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await call.message.answer("🏦 አዲሱን የ CBE <b>የሒሳብ ቁጥር እና ስም</b> በዚህ ፎርማት ይላኩ:\n<code>1000123456789, Nexus Digital</code>", parse_mode="HTML")
+    await state.set_state(AdminStates.waiting_cbe)
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_cbe)
+async def process_cbe(message: Message, state: FSMContext):
+    text = message.text.strip()
+    await set_setting("cbe_account", text, "CBE account details")
+    await message.answer(f"✅ የ CBE መረጃ ወደ <code>{text}</code> ተቀይሯል!", parse_mode="HTML")
+    await state.clear()
+
+
+@router.callback_query(F.data == "adm_set_fjoin")
+async def start_set_fjoin(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await call.message.answer("📢 ተጠቃሚዎች ግዴታ እንዲቀላቀሉ የሚፈልጉትን <b>የቻናል ዩዘርኔም (ወይም ID)</b> ይላኩ:\n<i>(ከአንድ በላይ ከሆነ በኮማ ይለዩ፡ @channel1, @channel2)</i>", parse_mode="HTML")
+    await state.set_state(AdminStates.waiting_fjoin)
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_fjoin)
+async def process_fjoin(message: Message, state: FSMContext):
+    text = message.text.strip()
+    await set_setting("force_join_channels", text, "Required force join channels")
+    await message.answer(f"✅ Force Join ቻናሎች ወደ <b>{text}</b> ተቀይረዋል!", parse_mode="HTML")
+    await state.clear()
+
+
+@router.callback_query(F.data == "adm_set_revchan")
+async def start_set_revchan(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await call.message.answer("🌟 የደንበኞች ሪቪው (Reviews) የሚለጠፍበትን <b>የቻናል ዩዘርኔም ወይም ID</b> ይላኩ:\n<i>ለምሳሌ፡ @nexus_reviews ወይም -1001234567890</i>", parse_mode="HTML")
+    await state.set_state(AdminStates.waiting_revchan)
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_revchan)
+async def process_revchan(message: Message, state: FSMContext):
+    text = message.text.strip()
+    await set_setting("reviews_channel_id", text, "Customer reviews channel")
+    await message.answer(f"✅ Review Channel ወደ <b>{text}</b> ተቀይሯል! አዳዲስ ሪቪውዎች እዚህ ቻናል ላይ ይለጠፋሉ።", parse_mode="HTML")
+    await state.clear()
+

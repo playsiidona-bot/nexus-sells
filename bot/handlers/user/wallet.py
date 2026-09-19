@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from bot.database.crud import (
     get_user_by_id, add_user_balance, check_transaction_exists,
-    save_payment_receipt
+    save_payment_receipt, get_setting
 )
 from bot.keyboards.inline import deposit_methods_keyboard
 from bot.services.i18n import t
@@ -39,9 +39,19 @@ async def dep_telebirr(call: CallbackQuery, state: FSMContext):
     user = await get_user_by_id(call.from_user.id)
     lang = user.language if user else "am"
 
+    custom_tele = await get_setting("telebirr_account")
+    phone = TELEBIRR_RECEIVER_PHONE
+    name = TELEBIRR_RECEIVER_NAME
+    if custom_tele and "," in custom_tele:
+        parts = [p.strip() for p in custom_tele.split(",", 1)]
+        phone = parts[0]
+        name = parts[1]
+    elif custom_tele:
+        phone = custom_tele
+
     text = t("telebirr_instructions", lang,
-             phone=TELEBIRR_RECEIVER_PHONE,
-             name=TELEBIRR_RECEIVER_NAME,
+             phone=phone,
+             name=name,
              min=MIN_DEPOSIT_AMOUNT)
 
     await state.set_state(DepositStates.waiting_receipt)
@@ -55,9 +65,19 @@ async def dep_cbe(call: CallbackQuery, state: FSMContext):
     user = await get_user_by_id(call.from_user.id)
     lang = user.language if user else "am"
 
+    custom_cbe = await get_setting("cbe_account")
+    account = CBE_ACCOUNT_NUMBER
+    name = CBE_ACCOUNT_NAME
+    if custom_cbe and "," in custom_cbe:
+        parts = [p.strip() for p in custom_cbe.split(",", 1)]
+        account = parts[0]
+        name = parts[1]
+    elif custom_cbe:
+        account = custom_cbe
+
     text = t("cbe_instructions", lang,
-             account=CBE_ACCOUNT_NUMBER,
-             name=CBE_ACCOUNT_NAME,
+             account=account,
+             name=name,
              min=MIN_DEPOSIT_AMOUNT)
 
     await state.set_state(DepositStates.waiting_receipt)

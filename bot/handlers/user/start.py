@@ -2,7 +2,7 @@ import re
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart
-from bot.database.crud import get_or_create_user, set_user_language, get_user_by_id
+from bot.database.crud import get_or_create_user, set_user_language, get_user_by_id, get_setting
 from bot.keyboards.reply import get_main_menu, get_language_menu
 from bot.services.i18n import t
 from bot.config import ADMIN_IDS, OWNER_ID, SUPPORT_USERNAME
@@ -36,7 +36,8 @@ async def cmd_start(message: Message):
     lang = user.language or "am"
     is_admin = user_id in ADMIN_IDS or user_id == OWNER_ID
 
-    welcome_text = t("welcome", lang)
+    custom_welcome = await get_setting("welcome_text")
+    welcome_text = custom_welcome if custom_welcome else t("welcome", lang)
     reply_kb = get_main_menu(lang=lang, is_admin=is_admin)
 
     await message.answer(welcome_text, reply_markup=reply_kb, parse_mode="HTML")

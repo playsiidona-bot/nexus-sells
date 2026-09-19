@@ -161,3 +161,13 @@ class SupportTicket(Base):
     status = Column(String(32), default="open")  # "open", "replaced", "refunded", "rejected"
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
+
+class BotSetting(Base):
+    __tablename__ = "bot_settings"
+
+    key = Column(String(64), primary_key=True, index=True)
+    value = Column(Text, nullable=False)
+    description = Column(String(256), nullable=True)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+

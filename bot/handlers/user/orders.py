@@ -3,16 +3,21 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from bot.database.crud import (
-    get_user_orders, get_user_by_id, get_order_by_id, create_support_ticket
+    get_user_orders, get_user_by_id, get_order_by_id, create_support_ticket,
+    add_review, get_setting
 )
-from bot.keyboards.inline import order_action_keyboard, admin_ticket_keyboard
-from bot.config import ADMIN_IDS, OWNER_ID, LOGS_CHANNEL_ID
+from bot.keyboards.inline import order_action_keyboard, admin_ticket_keyboard, rating_stars_keyboard
+from bot.config import ADMIN_IDS, OWNER_ID, LOGS_CHANNEL_ID, REVIEWS_CHANNEL_ID
 
 router = Router()
 
 
 class ReportIssueStates(StatesGroup):
     waiting_issue_text = State()
+
+
+class ReviewStates(StatesGroup):
+    waiting_review_comment = State()
 
 
 @router.message(F.text.in_(["📦 የገዟቸው ዕቃዎች", "📦 My Orders"]))
@@ -124,3 +129,106 @@ async def submit_issue_report(message: Message, state: FSMContext):
             await message.bot.send_message(LOGS_CHANNEL_ID, admin_alert, reply_markup=admin_kb, parse_mode="HTML")
         except Exception:
             pass
+
+
+# =====================================================================
+# CUSTOMER REVIEW & RATING (POSTS TO REVIEW CHANNEL)
+# =====================================================================
+
+@router.callback_query(F.data.startswith("rate_order_"))
+async def start_rate_order(call: CallbackQuery):
+    user = await get_user_by_id(call.from_user.id)
+    lang = user.language if user else "am"
+    order_id = int(call.data.split("_")[2])
+
+    order = await get_order_by_id(order_id)
+    if not order:
+        await call.answer("Order not found", show_alert=True)
+        return
+
+    text = (
+        f"⭐ <b>ለዕቃው ደረጃ ይስጡ (Rate {order.product_name}):</b>\n\n"
+        "ከ 1 እስከ 5 ኮከብ ይምረጡ፡"
+        if lang == "am" else
+        f"⭐ <b>Rate your order for {order.product_name}:</b>\n\n"
+        "Select your rating from 1 to 5 stars:"
+    )
+    await call.message.answer(text, reply_markup=rating_stars_keyboard(order_id), parse_mode="HTML")
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("star_"))
+async def select_rating_stars(call: CallbackQuery, state: FSMContext):
+    user = await get_user_by_id(call.from_user.id)
+    lang = user.language if user else "am"
+
+    parts = call.data.split("_")
+    order_id = int(parts[1])
+    stars = int(parts[2])
+
+    order = await get_order_by_id(order_id)
+    if not order:
+        await call.answer("Order not found", show_alert=True)
+        return
+
+    await state.update_data(
+        order_id=order.id,
+        product_name=order.product_name,
+        stars=stars
+    )
+    await state.set_state(ReviewStates.waiting_review_comment)
+
+    prompt = (
+        f"🌟 <b>{stars} ኮከብ መርጠዋል!</b>\n\n"
+        "ስለ አግልግሎቱ ያለዎትን አስተያየት እዚህ ይጻፉ (ወይም ያለ አስተያየት ለማጠናቀቅ <b>'skip'</b> ይበሉ)፡"
+        if lang == "am" else
+        f"🌟 <b>You selected {stars} stars!</b>\n\n"
+        "Please type your review comment (or send <b>'skip'</b> to finish):"
+    )
+    await call.message.edit_text(prompt, parse_mode="HTML")
+    await call.answer()
+
+
+@router.message(ReviewStates.waiting_review_comment)
+async def process_review_comment(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    user = await get_user_by_id(user_id)
+    lang = user.language if user else "am"
+
+    data = await state.get_data()
+    order_id = data.get("order_id")
+    product_name = data.get("product_name")
+    stars = data.get("stars", 5)
+
+    comment_text = (message.text or "").strip()
+    if comment_text.lower() in ("skip", "ዝለል", "-"):
+        comment_text = "Verified Customer Purchase ✅"
+
+    # Save to database
+    # (using order_id as product_id placeholder or order lookup)
+    order = await get_order_by_id(order_id)
+    if order:
+        await add_review(user_id, order.id, stars, comment_text)
+
+    ack = "🙏 <b>እናመሰግናለን! አስተያየትዎ በተሳካ ሁኔታ ተመዝግቧል።</b>" if lang == "am" else "🙏 <b>Thank you! Your review has been published.</b>"
+    await message.answer(ack, parse_mode="HTML")
+    await state.clear()
+
+    # BROADCAST TO REVIEW CHANNEL!
+    rev_channel = await get_setting("reviews_channel_id", REVIEWS_CHANNEL_ID)
+    if rev_channel:
+        first_name = message.from_user.first_name or "Customer"
+        star_emojis = "⭐" * stars
+        review_card = (
+            f"🌟 <b>NEW VERIFIED CUSTOMER REVIEW</b> 🌟\n\n"
+            f"📦 <b>Product:</b> {product_name}\n"
+            f"⭐ <b>Rating:</b> {star_emojis} ({stars}/5)\n"
+            f"💬 <b>Feedback:</b> <i>\"{comment_text}\"</i>\n\n"
+            f"👤 <b>Customer:</b> {first_name} (ID: <code>****{str(user_id)[-4:]}</code>)\n"
+            f"✅ <i>Verified Purchase via Nexus Hub Bot</i>"
+        )
+        try:
+            await message.bot.send_message(rev_channel, review_card, parse_mode="HTML")
+        except Exception as e:
+            pass
+

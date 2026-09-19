@@ -5,7 +5,7 @@ from sqlalchemy import select, update, delete, func
 from bot.database.session import async_session
 from bot.database.models import (
     User, Category, Product, ProductStock, CartItem, Order, PromoCode, PaymentReceipt, Review,
-    RestockSubscription, SupportTicket
+    RestockSubscription, SupportTicket, BotSetting
 )
 from bot.config import ADMIN_IDS, OWNER_ID, REFERRAL_PERCENT, BASE_CURRENCY
 
@@ -524,4 +524,54 @@ async def reject_ticket(ticket_code: str) -> bool:
         ticket.status = "rejected"
         await session.commit()
         return True
+
+
+# =====================================================================
+# DYNAMIC BOT SETTINGS & CUSTOMIZATION
+# =====================================================================
+
+_SETTINGS_CACHE: Dict[str, str] = {}
+
+
+async def get_setting(key: str, default: str = "") -> str:
+    """Retrieve dynamic bot setting from cache/database."""
+    if key in _SETTINGS_CACHE:
+        return _SETTINGS_CACHE[key]
+
+    async with async_session() as session:
+        stmt = select(BotSetting.value).where(BotSetting.key == key)
+        val = (await session.execute(stmt)).scalar_one_or_none()
+        if val is not None:
+            _SETTINGS_CACHE[key] = val
+            return val
+        return default
+
+
+async def set_setting(key: str, value: str, description: str = "") -> bool:
+    """Set or update dynamic bot setting and bust cache."""
+    async with async_session() as session:
+        stmt = select(BotSetting).where(BotSetting.key == key)
+        setting = (await session.execute(stmt)).scalar_one_or_none()
+        if setting:
+            setting.value = value
+            if description:
+                setting.description = description
+        else:
+            session.add(BotSetting(key=key, value=value, description=description))
+        await session.commit()
+        _SETTINGS_CACHE[key] = value
+        return True
+
+
+async def get_all_settings() -> Dict[str, str]:
+    """Retrieve all customized settings."""
+    async with async_session() as session:
+        stmt = select(BotSetting)
+        rows = (await session.execute(stmt)).scalars().all()
+        res = {}
+        for r in rows:
+            res[r.key] = r.value
+            _SETTINGS_CACHE[r.key] = r.value
+        return res
+
 

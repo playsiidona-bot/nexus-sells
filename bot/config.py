@@ -44,7 +44,11 @@ REFERRAL_PERCENT: float = float(os.getenv("REFERRAL_PERCENT", "5.0"))
 
 # Channel
 FORCE_JOIN_CHANNEL: str = os.getenv("FORCE_JOIN_CHANNEL", "").strip()
+FORCE_JOIN_CHANNELS: List[str] = [
+    c.strip() for c in os.getenv("FORCE_JOIN_CHANNELS", FORCE_JOIN_CHANNEL).split(",") if c.strip()
+]
 LOGS_CHANNEL_ID: str = os.getenv("LOGS_CHANNEL_ID", "").strip()
+REVIEWS_CHANNEL_ID: str = os.getenv("REVIEWS_CHANNEL_ID", "").strip()
 
 # Web Server
 PORT: int = int(os.getenv("PORT", "8080"))

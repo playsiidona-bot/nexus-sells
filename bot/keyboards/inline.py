@@ -48,9 +48,27 @@ def product_detail_keyboard(product_id: int, stock_count: int, lang: str = "am")
 
 
 def order_action_keyboard(order_id: int, lang: str = "am") -> InlineKeyboardMarkup:
-    btn_report = "⚠️ ቅሬታ አቅርብ (Report Issue)" if lang == "am" else "⚠️ Report Issue"
+    btn_report = "⚠️ ቅሬታ አቅርብ (Report)" if lang == "am" else "⚠️ Report"
+    btn_review = "⭐ ደረጃ ስጥ (Rate)" if lang == "am" else "⭐ Rate & Review"
     buttons = [
-        [InlineKeyboardButton(text=btn_report, callback_data=f"report_issue_{order_id}")]
+        [
+            InlineKeyboardButton(text=btn_review, callback_data=f"rate_order_{order_id}"),
+            InlineKeyboardButton(text=btn_report, callback_data=f"report_issue_{order_id}")
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def rating_stars_keyboard(order_id: int) -> InlineKeyboardMarkup:
+    buttons = [
+        [
+            InlineKeyboardButton(text="⭐ 1", callback_data=f"star_{order_id}_1"),
+            InlineKeyboardButton(text="⭐ 2", callback_data=f"star_{order_id}_2"),
+            InlineKeyboardButton(text="⭐ 3", callback_data=f"star_{order_id}_3"),
+            InlineKeyboardButton(text="⭐ 4", callback_data=f"star_{order_id}_4"),
+            InlineKeyboardButton(text="⭐ 5", callback_data=f"star_{order_id}_5"),
+        ],
+        [InlineKeyboardButton(text="✖️ ዝጋ / Close", callback_data="close_view")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -67,7 +85,6 @@ def admin_ticket_keyboard(ticket_code: str) -> InlineKeyboardMarkup:
         ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
-
 
 
 def cart_keyboard(cart_items: List[Dict[str, Any]], lang: str = "am") -> InlineKeyboardMarkup:
@@ -112,8 +129,33 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="🏷️ Add Category", callback_data="adm_add_cat")],
         [InlineKeyboardButton(text="➕ Add Stock Keys", callback_data="adm_add_stock"),
          InlineKeyboardButton(text="🎟️ Create Promo", callback_data="adm_add_promo")],
-        [InlineKeyboardButton(text="📢 Broadcast Message", callback_data="adm_broadcast"),
-         InlineKeyboardButton(text="📊 Statistics", callback_data="adm_stats")],
+        [InlineKeyboardButton(text="⚙️ Customization & Settings", callback_data="adm_settings"),
+         InlineKeyboardButton(text="📢 Broadcast Message", callback_data="adm_broadcast")],
+        [InlineKeyboardButton(text="📊 Real-Time Analytics", callback_data="adm_stats")],
         [InlineKeyboardButton(text="✖️ Close Admin", callback_data="close_view")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_settings_keyboard(maintenance_on: bool = False) -> InlineKeyboardMarkup:
+    m_icon = "🔴 Enabled (Turn OFF)" if maintenance_on else "⚪ Disabled (Turn ON)"
+    buttons = [
+        [
+            InlineKeyboardButton(text="📝 Edit Welcome Text", callback_data="adm_set_welcome"),
+            InlineKeyboardButton(text="📜 Edit Rules/About", callback_data="adm_set_rules")
+        ],
+        [
+            InlineKeyboardButton(text="📱 Edit Telebirr Number", callback_data="adm_set_telebirr"),
+            InlineKeyboardButton(text="🏦 Edit CBE Account", callback_data="adm_set_cbe")
+        ],
+        [
+            InlineKeyboardButton(text="📢 Set Force Join Channel", callback_data="adm_set_fjoin"),
+            InlineKeyboardButton(text="🌟 Set Review Channel", callback_data="adm_set_revchan")
+        ],
+        [
+            InlineKeyboardButton(text=f"🛠️ Maintenance Mode: {m_icon}", callback_data="adm_toggle_maint")
+        ],
+        [InlineKeyboardButton(text="🔙 Back to Admin", callback_data="adm_main_menu")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
