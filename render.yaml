@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: nexus-hub-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py
+    plan: free
+    envVars:
+      - key: PORT
+        value: 8080
