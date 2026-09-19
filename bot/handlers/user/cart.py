@@ -7,7 +7,7 @@ from bot.database.crud import (
 )
 from bot.keyboards.inline import cart_keyboard
 from bot.services.i18n import t
-from bot.config import BASE_CURRENCY
+from bot.config import BASE_CURRENCY, ORDERS_CHANNEL_ID, LOGS_CHANNEL_ID, get_channel_list
 
 router = Router()
 
@@ -125,3 +125,17 @@ async def cart_checkout(call: CallbackQuery):
     receipt = t("checkout_success", lang, orders="\n".join(order_details))
     await call.message.edit_text(receipt, parse_mode="HTML")
     await call.answer("🎉 Order Completed!", show_alert=False)
+
+    # Log to channel(s)
+    order_targets = get_channel_list(ORDERS_CHANNEL_ID or LOGS_CHANNEL_ID)
+    if order_targets:
+        log_msg = (
+            f"🛒 <b>NEW ORDER COMPLETED</b>\n\n"
+            f"👤 Customer: <code>{user_id}</code> (@{call.from_user.username or 'N/A'})\n"
+            f"📦 Items:\n" + "\n".join([f" • {o['product_name']} (x{o['quantity']}) - {o['price']} {BASE_CURRENCY}" for o in orders])
+        )
+        for ch in order_targets:
+            try:
+                await call.bot.send_message(ch, log_msg, parse_mode="HTML")
+            except Exception:
+                pass

@@ -13,7 +13,7 @@ from bot.services.verifier import verify_receipt_url
 from bot.config import (
     BASE_CURRENCY, TELEBIRR_RECEIVER_PHONE, TELEBIRR_RECEIVER_NAME,
     CBE_ACCOUNT_NUMBER, CBE_ACCOUNT_NAME, MIN_DEPOSIT_AMOUNT,
-    REFERRAL_PERCENT, LOGS_CHANNEL_ID
+    REFERRAL_PERCENT, LOGS_CHANNEL_ID, PAYMENTS_CHANNEL_ID, get_channel_list
 )
 
 router = Router()
@@ -163,11 +163,12 @@ async def process_receipt_submission(message: Message, state: FSMContext):
     )
     await state.clear()
 
-    # Log to channel if configured
-    if LOGS_CHANNEL_ID:
+    # Log to channel(s) if configured
+    target_channels = get_channel_list(PAYMENTS_CHANNEL_ID or LOGS_CHANNEL_ID)
+    for ch in target_channels:
         try:
             await message.bot.send_message(
-                LOGS_CHANNEL_ID,
+                ch,
                 f"💳 <b>New Deposit Verified!</b>\n\n"
                 f"👤 User: <code>{user_id}</code> (@{message.from_user.username or 'N/A'})\n"
                 f"💵 Amount: <b>{amount} {BASE_CURRENCY}</b>\n"

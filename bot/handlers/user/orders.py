@@ -7,7 +7,10 @@ from bot.database.crud import (
     add_review, get_setting
 )
 from bot.keyboards.inline import order_action_keyboard, admin_ticket_keyboard, rating_stars_keyboard
-from bot.config import ADMIN_IDS, OWNER_ID, LOGS_CHANNEL_ID, REVIEWS_CHANNEL_ID
+from bot.config import (
+    ADMIN_IDS, OWNER_ID, LOGS_CHANNEL_ID, ORDERS_CHANNEL_ID,
+    REVIEWS_CHANNEL_ID, get_channel_list
+)
 
 router = Router()
 
@@ -124,9 +127,10 @@ async def submit_issue_report(message: Message, state: FSMContext):
         except Exception:
             pass
 
-    if LOGS_CHANNEL_ID:
+    log_channels = get_channel_list(ORDERS_CHANNEL_ID or LOGS_CHANNEL_ID)
+    for ch in log_channels:
         try:
-            await message.bot.send_message(LOGS_CHANNEL_ID, admin_alert, reply_markup=admin_kb, parse_mode="HTML")
+            await message.bot.send_message(ch, admin_alert, reply_markup=admin_kb, parse_mode="HTML")
         except Exception:
             pass
 
@@ -214,9 +218,10 @@ async def process_review_comment(message: Message, state: FSMContext):
     await message.answer(ack, parse_mode="HTML")
     await state.clear()
 
-    # BROADCAST TO REVIEW CHANNEL!
-    rev_channel = await get_setting("reviews_channel_id", REVIEWS_CHANNEL_ID)
-    if rev_channel:
+    # BROADCAST TO REVIEW CHANNEL(S)!
+    rev_channel_raw = await get_setting("reviews_channel_id", REVIEWS_CHANNEL_ID)
+    rev_targets = get_channel_list(rev_channel_raw)
+    if rev_targets:
         first_name = message.from_user.first_name or "Customer"
         star_emojis = "⭐" * stars
         review_card = (
@@ -227,8 +232,9 @@ async def process_review_comment(message: Message, state: FSMContext):
             f"👤 <b>Customer:</b> {first_name} (ID: <code>****{str(user_id)[-4:]}</code>)\n"
             f"✅ <i>Verified Purchase via Nexus Hub Bot</i>"
         )
-        try:
-            await message.bot.send_message(rev_channel, review_card, parse_mode="HTML")
-        except Exception as e:
-            pass
+        for target in rev_targets:
+            try:
+                await message.bot.send_message(target, review_card, parse_mode="HTML")
+            except Exception:
+                pass
 

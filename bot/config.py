@@ -42,13 +42,23 @@ CRYPTO_PAY_TOKEN: str = os.getenv("CRYPTO_PAY_TOKEN", "")
 # Referral
 REFERRAL_PERCENT: float = float(os.getenv("REFERRAL_PERCENT", "5.0"))
 
-# Channel
+# 7. Channel Management & Logging
 FORCE_JOIN_CHANNEL: str = os.getenv("FORCE_JOIN_CHANNEL", "").strip()
 FORCE_JOIN_CHANNELS: List[str] = [
     c.strip() for c in os.getenv("FORCE_JOIN_CHANNELS", FORCE_JOIN_CHANNEL).split(",") if c.strip()
 ]
+
+# Fallback & dedicated logging channels (supports single ID or comma-separated: -100111,-100222)
 LOGS_CHANNEL_ID: str = os.getenv("LOGS_CHANNEL_ID", "").strip()
-REVIEWS_CHANNEL_ID: str = os.getenv("REVIEWS_CHANNEL_ID", "").strip()
+PAYMENTS_CHANNEL_ID: str = os.getenv("PAYMENTS_CHANNEL_ID", LOGS_CHANNEL_ID).strip()
+ORDERS_CHANNEL_ID: str = os.getenv("ORDERS_CHANNEL_ID", LOGS_CHANNEL_ID).strip()
+REVIEWS_CHANNEL_ID: str = os.getenv("REVIEWS_CHANNEL_ID", LOGS_CHANNEL_ID).strip()
+
+def get_channel_list(channel_setting: str) -> List[str]:
+    """Helper to parse a single or comma-separated list of channel IDs / usernames."""
+    if not channel_setting:
+        return []
+    return [c.strip() for c in str(channel_setting).split(",") if c.strip()]
 
 # Web Server
 PORT: int = int(os.getenv("PORT", "8080"))
