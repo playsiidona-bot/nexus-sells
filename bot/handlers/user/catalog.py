@@ -14,7 +14,7 @@ router = Router()
 @router.message(F.text.in_(["🛍️ የዕቃዎች ካታሎግ", "🛍️ Products Catalog"]))
 async def open_catalog(message: Message):
     user = await get_user_by_id(message.from_user.id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
 
     categories = await get_all_categories()
     if not categories:
@@ -28,7 +28,7 @@ async def open_catalog(message: Message):
 @router.callback_query(F.data == "catalog_home")
 async def back_to_catalog(call: CallbackQuery):
     user = await get_user_by_id(call.from_user.id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
 
     categories = await get_all_categories()
     kb = categories_keyboard(categories, lang)
@@ -39,7 +39,7 @@ async def back_to_catalog(call: CallbackQuery):
 @router.callback_query(F.data.startswith("cat_"))
 async def open_category(call: CallbackQuery):
     user = await get_user_by_id(call.from_user.id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
 
     cat_id = int(call.data.split("_")[1])
     products = await get_products_by_category(cat_id)
@@ -56,7 +56,7 @@ async def open_category(call: CallbackQuery):
 @router.callback_query(F.data.startswith("prod_"))
 async def open_product(call: CallbackQuery):
     user = await get_user_by_id(call.from_user.id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
 
     prod_id = int(call.data.split("_")[1])
     product = await get_product_by_id(prod_id)
@@ -86,7 +86,7 @@ async def open_product(call: CallbackQuery):
 @router.callback_query(F.data.startswith("cart_add_"))
 async def add_item_to_cart(call: CallbackQuery):
     user = await get_user_by_id(call.from_user.id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
 
     prod_id = int(call.data.split("_")[2])
     await add_to_cart(call.from_user.id, prod_id, quantity=1)
@@ -96,7 +96,7 @@ async def add_item_to_cart(call: CallbackQuery):
 @router.callback_query(F.data.startswith("notify_restock_"))
 async def handle_notify_restock(call: CallbackQuery):
     user = await get_user_by_id(call.from_user.id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
     prod_id = int(call.data.split("_")[2])
 
     ok = await subscribe_restock(call.from_user.id, prod_id)

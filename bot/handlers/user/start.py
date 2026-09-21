@@ -33,7 +33,7 @@ async def cmd_start(message: Message):
         referrer_id=referrer_id
     )
 
-    lang = user.language or "am"
+    lang = user.language or "en"
     is_admin = user_id in ADMIN_IDS or user_id == OWNER_ID
 
     custom_welcome = await get_setting("welcome_text")
@@ -43,9 +43,9 @@ async def cmd_start(message: Message):
     await message.answer(welcome_text, reply_markup=reply_kb, parse_mode="HTML")
 
 
-@router.message(F.text.in_(["🌐 ቋንቋ / Language", "Language / ቋንቋ"]))
+@router.message(F.text.in_(["🌐 ቋንቋ / Language", "Language / ቋንቋ", "🌐 Language", "🌐 ቋንቋ"]))
 async def select_language(message: Message):
-    await message.answer("🌐 ቋንቋ ይምረጡ / Choose your language:", reply_markup=get_language_menu())
+    await message.answer("🌐 Choose your language / ቋንቋ ይምረጡ:", reply_markup=get_language_menu())
 
 
 @router.message(F.text == "🇪🇹 አማርኛ (Amharic)")
@@ -64,24 +64,24 @@ async def set_lang_en(message: Message):
     await message.answer("✅ Language switched to <b>English</b>!", reply_markup=get_main_menu("en", is_admin), parse_mode="HTML")
 
 
-@router.message(F.text.in_(["🔙 Back / ተመለስ"]))
+@router.message(F.text.in_(["🔙 Back / ተመለስ", "🔙 Back", "🔙 ተመለስ"]))
 async def back_to_main(message: Message):
     user = await get_user_by_id(message.from_user.id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
     is_admin = message.from_user.id in ADMIN_IDS or message.from_user.id == OWNER_ID
     await message.answer(t("welcome", lang), reply_markup=get_main_menu(lang, is_admin), parse_mode="HTML")
 
 
-@router.message(F.text.in_(["💬 የደንበኞች አገልግሎት", "💬 Customer Support"]))
+@router.message(F.text.in_(["💬 የደንበኞች አገልግሎት", "💬 Customer Support", "💬 24/7 Support", "💬 Support"]))
 async def support_info(message: Message):
     user = await get_user_by_id(message.from_user.id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
     text = (
+        f"💬 <b>Customer Support:</b>\n\n"
+        f"For questions, issues, or custom orders, contact @{SUPPORT_USERNAME}."
+        if lang == "en" else
         f"💬 <b>የደንበኞች አገልግሎት (Support):</b>\n\n"
         f"ማንኛውም ጥያቄ ወይም እርዳታ ሲፈልጉ በ @{SUPPORT_USERNAME} ያነጋግሩን።"
-        if lang == "am" else
-        f"💬 <b>Customer Support:</b>\n\n"
-        f"For any inquiries or assistance, please contact @{SUPPORT_USERNAME}."
     )
     await message.answer(text, parse_mode="HTML")
 

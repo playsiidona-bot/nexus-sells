@@ -108,16 +108,28 @@ def cart_keyboard(cart_items: List[Dict[str, Any]], lang: str = "am") -> InlineK
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def deposit_methods_keyboard(lang: str = "am") -> InlineKeyboardMarkup:
+def deposit_methods_keyboard(lang: str = "en", show_local: bool = True) -> InlineKeyboardMarkup:
     buttons = [
         [
-            InlineKeyboardButton(text=t("pay_telebirr", lang), callback_data="dep_telebirr"),
-            InlineKeyboardButton(text=t("pay_cbe", lang), callback_data="dep_cbe")
+            InlineKeyboardButton(text="💎 CryptoBot (USDT, TON, BTC)", callback_data="dep_crypto")
         ],
         [
-            InlineKeyboardButton(text=t("pay_stars", lang), callback_data="dep_stars"),
-            InlineKeyboardButton(text="💎 CryptoPay", callback_data="dep_crypto")
-        ],
+            InlineKeyboardButton(text="⭐ Telegram Stars", callback_data="dep_stars")
+        ]
+    ]
+    if show_local:
+        buttons.append([
+            InlineKeyboardButton(text=t("pay_telebirr", lang), callback_data="dep_telebirr"),
+            InlineKeyboardButton(text=t("pay_cbe", lang), callback_data="dep_cbe")
+        ])
+    buttons.append([InlineKeyboardButton(text=t("btn_close", lang), callback_data="close_view")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def crypto_invoice_keyboard(pay_url: str, invoice_id: int, lang: str = "en") -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text="💳 Pay with @CryptoBot", url=pay_url)],
+        [InlineKeyboardButton(text="🔄 Check Payment", callback_data=f"check_crypto_{invoice_id}")],
         [InlineKeyboardButton(text=t("btn_close", lang), callback_data="close_view")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)

@@ -10,7 +10,7 @@ router = Router()
 @router.message(F.text.in_(["👥 የግብዣ ሊንክ (Referral)", "👥 Referral Link"]))
 async def show_referral(message: Message):
     user = await get_user_by_id(message.from_user.id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
 
     bot_info = await message.bot.get_me()
     ref_link = f"https://t.me/{bot_info.username}?start=ref_{message.from_user.id}"

@@ -13,7 +13,7 @@ class User(Base):
     telegram_id = Column(BigInteger, primary_key=True, index=True)
     username = Column(String(64), nullable=True)
     first_name = Column(String(128), default="Customer")
-    language = Column(String(10), default="am")  # "am" or "en"
+    language = Column(String(10), default="en")  # "en" or "am"
     balance = Column(Numeric(12, 2), default=0.00, nullable=False)
     referrer_id = Column(BigInteger, nullable=True, index=True)
     is_banned = Column(Boolean, default=False)

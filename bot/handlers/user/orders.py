@@ -26,7 +26,7 @@ class ReviewStates(StatesGroup):
 @router.message(F.text.in_(["📦 የገዟቸው ዕቃዎች", "📦 My Orders"]))
 async def view_orders(message: Message):
     user = await get_user_by_id(message.from_user.id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
 
     orders = await get_user_orders(message.from_user.id, limit=5)
     if not orders:
@@ -51,7 +51,7 @@ async def view_orders(message: Message):
 @router.callback_query(F.data.startswith("report_issue_"))
 async def start_report_issue(call: CallbackQuery, state: FSMContext):
     user = await get_user_by_id(call.from_user.id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
     order_id = int(call.data.split("_")[2])
 
     order = await get_order_by_id(order_id)
@@ -77,7 +77,7 @@ async def start_report_issue(call: CallbackQuery, state: FSMContext):
 async def submit_issue_report(message: Message, state: FSMContext):
     user_id = message.from_user.id
     user = await get_user_by_id(user_id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
 
     data = await state.get_data()
     order_id = data.get("order_id")
@@ -142,7 +142,7 @@ async def submit_issue_report(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("rate_order_"))
 async def start_rate_order(call: CallbackQuery):
     user = await get_user_by_id(call.from_user.id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
     order_id = int(call.data.split("_")[2])
 
     order = await get_order_by_id(order_id)
@@ -164,7 +164,7 @@ async def start_rate_order(call: CallbackQuery):
 @router.callback_query(F.data.startswith("star_"))
 async def select_rating_stars(call: CallbackQuery, state: FSMContext):
     user = await get_user_by_id(call.from_user.id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
 
     parts = call.data.split("_")
     order_id = int(parts[1])
@@ -197,7 +197,7 @@ async def select_rating_stars(call: CallbackQuery, state: FSMContext):
 async def process_review_comment(message: Message, state: FSMContext):
     user_id = message.from_user.id
     user = await get_user_by_id(user_id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
 
     data = await state.get_data()
     order_id = data.get("order_id")

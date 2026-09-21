@@ -27,24 +27,27 @@ SUPPORT_USERNAME: str = os.getenv("SUPPORT_USERNAME", "support").replace("@", ""
 # Database
 DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///nexus_hub.db")
 
-# Ethiopian Payments (supports TELEBIRR_NUMBER / CBE_ACCOUNT aliases)
-BASE_CURRENCY: str = os.getenv("BASE_CURRENCY", "ETB")
-TELEBIRR_RECEIVER_PHONE: str = os.getenv("TELEBIRR_RECEIVER_PHONE", os.getenv("TELEBIRR_NUMBER", "0900000000")).strip().strip('"')
-TELEBIRR_RECEIVER_NAME: str = os.getenv("TELEBIRR_RECEIVER_NAME", os.getenv("TELEBIRR_NAME", "Nexus Hub")).strip().strip('"')
-CBE_ACCOUNT_NUMBER: str = os.getenv("CBE_ACCOUNT_NUMBER", os.getenv("CBE_ACCOUNT", "1000000000000")).strip().strip('"')
-CBE_ACCOUNT_NAME: str = os.getenv("CBE_ACCOUNT_NAME", os.getenv("CBE_NAME", "Nexus Hub")).strip().strip('"')
-MIN_DEPOSIT_AMOUNT: float = float(os.getenv("MIN_DEPOSIT_AMOUNT", "20"))
-MAX_DEPOSIT_AMOUNT: float = float(os.getenv("MAX_DEPOSIT_AMOUNT", "50000"))
+# Base Store Currency (Default: USD for international digital commerce)
+BASE_CURRENCY: str = os.getenv("BASE_CURRENCY", "USD").upper().strip()
+CURRENCY_SYMBOL: str = "$" if BASE_CURRENCY == "USD" else f" {BASE_CURRENCY} "
 
-# Supplier API
+# International & Global Payments
+CRYPTO_PAY_TOKEN: str = os.getenv("CRYPTO_PAY_TOKEN", "").strip()
+STARS_RATE_USD: float = float(os.getenv("STARS_RATE_USD", "0.02"))  # 1 Telegram Star = $0.02 (50 Stars = $1.00)
+MIN_DEPOSIT_AMOUNT: float = float(os.getenv("MIN_DEPOSIT_AMOUNT", "1.0" if BASE_CURRENCY == "USD" else "20"))
+MAX_DEPOSIT_AMOUNT: float = float(os.getenv("MAX_DEPOSIT_AMOUNT", "5000.0" if BASE_CURRENCY == "USD" else "50000"))
+
+# Local Payment Accounts (optional, enabled if configured)
+TELEBIRR_RECEIVER_PHONE: str = os.getenv("TELEBIRR_RECEIVER_PHONE", os.getenv("TELEBIRR_NUMBER", "")).strip().strip('"')
+TELEBIRR_RECEIVER_NAME: str = os.getenv("TELEBIRR_RECEIVER_NAME", os.getenv("TELEBIRR_NAME", "")).strip().strip('"')
+CBE_ACCOUNT_NUMBER: str = os.getenv("CBE_ACCOUNT_NUMBER", os.getenv("CBE_ACCOUNT", "")).strip().strip('"')
+CBE_ACCOUNT_NAME: str = os.getenv("CBE_ACCOUNT_NAME", os.getenv("CBE_NAME", "")).strip().strip('"')
+
+# Supplier API (AIVerse Hub / Digital Supplier)
 AIVERSE_API_KEY: str = os.getenv("AIVERSE_API_KEY", "")
 AIVERSE_BASE_URL: str = os.getenv("AIVERSE_BASE_URL", "https://aiversehub.store").rstrip("/")
 
-# Global Payments
-STARS_RATE_ETB: float = float(os.getenv("STARS_RATE_ETB", "25.0"))
-CRYPTO_PAY_TOKEN: str = os.getenv("CRYPTO_PAY_TOKEN", "")
-
-# Referral
+# Referral & Growth
 REFERRAL_PERCENT: float = float(os.getenv("REFERRAL_PERCENT", "5.0"))
 
 def get_channel_list(channel_setting: str) -> List[str]:

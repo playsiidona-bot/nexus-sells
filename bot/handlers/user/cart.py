@@ -14,7 +14,7 @@ router = Router()
 
 async def render_cart_view(user_id: int) -> tuple[str, Any]:
     user = await get_user_by_id(user_id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
 
     items = await get_cart(user_id)
     if not items:
@@ -96,7 +96,7 @@ async def cart_clear_all(call: CallbackQuery):
 async def cart_checkout(call: CallbackQuery):
     user_id = call.from_user.id
     user = await get_user_by_id(user_id)
-    lang = user.language if user else "am"
+    lang = user.language if user else "en"
 
     success, msg, orders = await checkout_cart_atomic(user_id)
 

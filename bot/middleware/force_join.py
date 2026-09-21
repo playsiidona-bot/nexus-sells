@@ -51,23 +51,42 @@ class ForceJoinMiddleware(BaseMiddleware):
             try:
                 member = await bot.get_chat_member(chat_id=ch, user_id=user_id)
                 if member.status in ("left", "kicked"):
-                    ch_link = f"https://t.me/{ch.replace('@', '')}"
-                    unjoined_buttons.append([InlineKeyboardButton(text=f"📢 Join {ch}", url=ch_link)])
+                    # Resolve safe URL
+                    link = None
+                    if str(ch).startswith("@"):
+                        link = f"https://t.me/{str(ch).lstrip('@')}"
+                    else:
+                        try:
+                            chat_info = await bot.get_chat(ch)
+                            if chat_info.username:
+                                link = f"https://t.me/{chat_info.username}"
+                            elif chat_info.invite_link:
+                                link = chat_info.invite_link
+                            else:
+                                created_link = await bot.create_chat_invite_link(ch)
+                                link = created_link.invite_link
+                        except Exception:
+                            pass
+
+                    if link:
+                        unjoined_buttons.append([InlineKeyboardButton(text=f"📢 Join Channel", url=link)])
             except Exception as e:
-                logger.warning(f"Could not verify membership for {ch}: {e}")
+                # If bot cannot check membership (not admin or invalid ID), gracefully bypass
+                logger.warning(f"Force join bypass for channel {ch}: {e}")
 
         if unjoined_buttons:
-            unjoined_buttons.append([InlineKeyboardButton(text="🔄 አረጋግጥ / Verify", callback_data="check_join")])
+            unjoined_buttons.append([InlineKeyboardButton(text="🔄 Verify / አረጋግጥ", callback_data="check_join")])
             msg_text = (
-                "⚠️ <b>ቦቱን ለመጠቀም እባክዎ መጀመሪያ ቻናላችንን ይቀላቀሉ!</b>\n\n"
-                "Please join our required official channel(s) before continuing."
+                "📢 <b>Join Our Official Channel to Continue</b>\n\n"
+                "Please join our required community channel below, then click <b>Verify</b> to access the store.\n\n"
+                "<i>⚠️ ቦቱን ለመጠቀም እባክዎ መጀመሪያ ቻናላችንን ይቀላቀሉ።</i>"
             )
             kb = InlineKeyboardMarkup(inline_keyboard=unjoined_buttons)
             if isinstance(event, Message):
                 await event.answer(msg_text, reply_markup=kb, parse_mode="HTML")
             elif isinstance(event, CallbackQuery):
                 if event.data == "check_join":
-                    await event.answer("⚠️ እስካሁን አልተቀላቀሉም! እባክዎ መጀመሪያ ቻናሉን ይቀላቀሉ።", show_alert=True)
+                    await event.answer("⚠️ You have not joined all channels yet! Please join to continue.", show_alert=True)
                 else:
                     await event.message.answer(msg_text, reply_markup=kb, parse_mode="HTML")
                     await event.answer()
