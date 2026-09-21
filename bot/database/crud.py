@@ -217,11 +217,12 @@ async def get_product_stock_count(product_id: int) -> int:
 
 
 async def add_product_stock_items(product_id: int, items: List[str], is_infinity: bool = False) -> int:
+    import re
     async with async_session() as session:
         added = 0
         for item in items:
-            val = item.strip()
-            if val:
+            sub_items = [x.strip() for x in re.split(r'[\n,]+', str(item)) if x.strip()]
+            for val in sub_items:
                 stock = ProductStock(product_id=product_id, value=val, is_infinity=is_infinity)
                 session.add(stock)
                 added += 1

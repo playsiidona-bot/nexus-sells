@@ -1,4 +1,5 @@
 import logging
+import re
 from decimal import Decimal
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
@@ -154,23 +155,49 @@ async def start_add_stock(call: CallbackQuery, state: FSMContext):
 
     prod_list = "\n".join([f"ID: <code>{p.id}</code> - {p.name}" for p in prods[:20]])
     await call.message.answer(
-        f"🔑 <b>Stock ለመጨመር የዕቃውን ID ያስገቡ፡</b>\n\n{prod_list}\n\nየዕቃውን ID ይላኩ፡",
+        f"<b>Stock ለመጨመር የዕቃውን ID ያስገቡ:</b>\n\n{prod_list}\n\nየዕቃውን ID ይላኩ:",
         parse_mode="HTML"
     )
     await state.set_state(AdminStates.waiting_stock_prod_id)
     await call.answer()
 
 
+@router.callback_query(F.data.startswith("adm_prod_stock_"))
+async def admin_direct_prod_stock(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        await call.answer("Unauthorized", show_alert=True)
+        return
+    prod_id_str = call.data.replace("adm_prod_stock_", "")
+    if not prod_id_str.isdigit():
+        await call.answer("Invalid product ID", show_alert=True)
+        return
+    prod_id = int(prod_id_str)
+    product = await get_product_by_id(prod_id)
+    if not product:
+        await call.answer("Product not found", show_alert=True)
+        return
+
+    await state.update_data(prod_id=prod_id)
+    await call.message.answer(
+        f"<b>{product.name}</b>\n\n"
+        "አሁን ላይሰንሶቹን፣ ሊንኮቹን ወይም ቁልፎቹን በኮማ (,) ወይም በአዲስ መስመር ለይተው ይላኩ (Batch paste):\n\n"
+        "<i>ምሳሌ:\nKEY1, KEY2, KEY3\nወይም\nhttps://link1.com, https://link2.com</i>",
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminStates.waiting_stock_keys)
+    await call.answer()
+
+
 @router.message(AdminStates.waiting_stock_prod_id)
 async def process_stock_prod_id(message: Message, state: FSMContext):
     if not message.text.isdigit():
-        await message.answer("⚠️ እባክዎ ትክክለኛ የዕቃ ቁጥር (ID) ያስገቡ።")
+        await message.answer("እባክዎ ትክክለኛ የዕቃ ቁጥር (ID) ያስገቡ።")
         return
     prod_id = int(message.text)
     await state.update_data(prod_id=prod_id)
     await message.answer(
-        "📝 አሁን ላይሰንሶቹን/ቁልፎቹን በአንድ መስመር አንድ በማድረግ ይላኩ (Batch paste):\n\n"
-        "<i>ለምሳሌ፡\nKEY1-AAAA-BBBB\nKEY2-CCCC-DDDD</i>",
+        "አሁን ላይሰንሶቹን፣ ሊንኮቹን ወይም ቁልፎቹን በኮማ (,) ወይም በአዲስ መስመር ለይተው ይላኩ (Batch paste):\n\n"
+        "<i>ምሳሌ:\nKEY1, KEY2, KEY3\nወይም\nhttps://link1.com, https://link2.com</i>",
         parse_mode="HTML"
     )
     await state.set_state(AdminStates.waiting_stock_keys)
@@ -180,7 +207,8 @@ async def process_stock_prod_id(message: Message, state: FSMContext):
 async def process_stock_keys(message: Message, state: FSMContext):
     data = await state.get_data()
     prod_id = data.get("prod_id")
-    lines = [x.strip() for x in message.text.split("\n") if x.strip()]
+    raw_text = message.text or ""
+    lines = [x.strip() for x in re.split(r'[\n,]+', raw_text) if x.strip()]
     if lines and prod_id:
         added = await add_product_stock_items(prod_id, lines)
         product = await get_product_by_id(prod_id)
@@ -190,7 +218,7 @@ async def process_stock_keys(message: Message, state: FSMContext):
         subscribers = await get_and_clear_restock_subscribers(prod_id)
         notified = 0
         restock_msg = (
-            f"🎉 <b>ዕቃው አሁን ገብቷል! (Back in Stock!)</b>\n\n"
+            f"ዕቃው አሁን ገብቷል! (Back in Stock!)\n\n"
             f"ይፈልጉት የነበረው <b>{prod_name}</b> አሁን በክምችት ላይ ይገኛል!\n"
             "አሁኑኑ በቦቱ ካታሎግ ገብተው ማዘዝ ይችላሉ።"
         )
@@ -201,10 +229,12 @@ async def process_stock_keys(message: Message, state: FSMContext):
             except Exception:
                 pass
 
-        reply = f"✅ <b>{added}</b> ቁልፎች ወደ <b>{prod_name}</b> ተጨምረዋል!"
+        reply = f"<b>{added}</b> ስቶክ (ቁልፍ/ሊንክ) ወደ <b>{prod_name}</b> ተጨምሯል!"
         if notified > 0:
-            reply += f"\n📢 ለ <b>{notified}</b> ተጠቃሚዎች የክምችት ማሳወቂያ (Restock Alert) ተልኳል!"
+            reply += f"\nለ <b>{notified}</b> ተጠቃሚዎች የክምችት ማሳወቂያ (Restock Alert) ተልኳል!"
         await message.answer(reply, parse_mode="HTML")
+    else:
+        await message.answer("ምንም ትክክለኛ ስቶክ አልተገኘም። እባክዎ በኮማ (,) ወይም በአዲስ መስመር ለይተው እንደገና ይሞክሩ።")
     await state.clear()
 
 
