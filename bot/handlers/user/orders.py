@@ -54,11 +54,14 @@ async def view_orders(message: Message):
     await message.answer(title, parse_mode="HTML")
 
     for o in orders:
+        c_in = getattr(o, "customer_input", None)
+        input_line = f"• Provided Target: <code>{c_in}</code>\n" if c_in else ""
         order_text = (
             f"<b>{o.product_name}</b> (x{o.quantity})\n"
             f"• Order Code: <code>{o.order_code}</code>\n"
             f"• Total Paid: <code>{CURRENCY_SYMBOL}{o.total_price:.2f}</code>\n"
-            f"• Delivered Key / Data:\n<code>{o.delivered_data or 'Fulfilled'}</code>"
+            f"{input_line}"
+            f"• Delivered Details:\n<code>{o.delivered_data or 'Fulfilled'}</code>"
         )
         kb = order_action_keyboard(o.id, lang)
         await message.answer(order_text, reply_markup=kb, parse_mode="HTML")

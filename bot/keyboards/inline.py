@@ -227,6 +227,8 @@ def admin_api_item_review_keyboard(product: Product) -> InlineKeyboardMarkup:
     """Admin review & edit actions for a specific API product."""
     toggle_text = "Hide / Deactivate" if product.is_active else "Approve & Publish to Store"
     toggle_style = "danger" if product.is_active else "success"
+    input_tag = f"Input Req: YES ({product.input_placeholder or '@username'})" if product.requires_input else "Input Req: NO"
+    input_style = "success" if product.requires_input else "primary"
     buttons = [
         [InlineKeyboardButton(text=toggle_text, callback_data=f"adm_api_toggle_{product.id}", style=toggle_style)],
         [
@@ -234,10 +236,13 @@ def admin_api_item_review_keyboard(product: Product) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="Edit Title", callback_data=f"adm_api_setname_{product.id}", style="primary")
         ],
         [
-            InlineKeyboardButton(text="Change Category", callback_data=f"adm_api_setcat_{product.id}", style="primary"),
-            InlineKeyboardButton(text="Delete Product", callback_data=f"adm_api_del_{product.id}", style="danger")
+            InlineKeyboardButton(text=input_tag, callback_data=f"adm_api_toggleinput_{product.id}", style=input_style),
+            InlineKeyboardButton(text="Change Category", callback_data=f"adm_api_setcat_{product.id}", style="primary")
         ],
-        [InlineKeyboardButton(text="< Back to Pending List", callback_data="adm_api_pending", style="danger")]
+        [
+            InlineKeyboardButton(text="Delete Product", callback_data=f"adm_api_del_{product.id}", style="danger"),
+            InlineKeyboardButton(text="< Back to Pending", callback_data="adm_api_pending", style="danger")
+        ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -261,6 +266,9 @@ def admin_settings_keyboard(maintenance_on: bool = False) -> InlineKeyboardMarku
     m_status = "ENABLED (Click to Disable)" if maintenance_on else "DISABLED (Click to Enable)"
     buttons = [
         [
+            InlineKeyboardButton(text="API Keys & Gateways", callback_data="adm_api_keys", style="primary")
+        ],
+        [
             InlineKeyboardButton(text="Edit Welcome Card", callback_data="adm_set_welcome"),
             InlineKeyboardButton(text="Edit Store Rules", callback_data="adm_set_rules")
         ],
@@ -273,8 +281,75 @@ def admin_settings_keyboard(maintenance_on: bool = False) -> InlineKeyboardMarku
             InlineKeyboardButton(text="Set Review Channel", callback_data="adm_set_revchan")
         ],
         [
-            InlineKeyboardButton(text=f"Maintenance Mode: {m_status}", callback_data="adm_toggle_maint", style="danger")  # Red
+            InlineKeyboardButton(text=f"Maintenance Mode: {m_status}", callback_data="adm_toggle_maint", style="danger")
         ],
-        [InlineKeyboardButton(text="< Back to Admin", callback_data="adm_home", style="primary")]                         # Blue
+        [InlineKeyboardButton(text="< Back to Admin", callback_data="adm_home", style="danger")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_api_keys_keyboard() -> InlineKeyboardMarkup:
+    """Keyboard for managing external API keys and gateways."""
+    buttons = [
+        [
+            InlineKeyboardButton(text="AIVerseHub Key", callback_data="adm_key_aiverse", style="primary"),
+            InlineKeyboardButton(text="CryptoBot Token", callback_data="adm_key_cryptobot", style="primary"),
+        ],
+        [
+            InlineKeyboardButton(text="OxaPay Key", callback_data="adm_key_oxapay", style="primary"),
+            InlineKeyboardButton(text="NOWPayments Key", callback_data="adm_key_nowpayments", style="primary"),
+        ],
+        [
+            InlineKeyboardButton(text="Cryptomus Key", callback_data="adm_key_cryptomus_key", style="primary"),
+            InlineKeyboardButton(text="Cryptomus Merchant ID", callback_data="adm_key_cryptomus_mid", style="primary"),
+        ],
+        [
+            InlineKeyboardButton(text="Test AIVerseHub Connection", callback_data="adm_test_aiverse", style="success"),
+        ],
+        [InlineKeyboardButton(text="< Back to Settings", callback_data="adm_settings", style="danger")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_add_prod_category_keyboard(categories: List[Category]) -> InlineKeyboardMarkup:
+    """Category picker for adding a new product."""
+    buttons = []
+    row = []
+    for cat in categories:
+        row.append(InlineKeyboardButton(text=cat.name, callback_data=f"adm_addprod_cat_{cat.id}", style="primary"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="< Cancel", callback_data="adm_home", style="danger")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_add_prod_skip_desc_keyboard() -> InlineKeyboardMarkup:
+    """Option to skip description during product creation."""
+    buttons = [
+        [InlineKeyboardButton(text="Skip Description", callback_data="adm_addprod_skip_desc", style="primary")],
+        [InlineKeyboardButton(text="< Cancel", callback_data="adm_home", style="danger")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_add_prod_delivery_keyboard() -> InlineKeyboardMarkup:
+    """Delivery type selection during product creation."""
+    buttons = [
+        [InlineKeyboardButton(text="Stock / License Keys", callback_data="adm_addprod_deliv_stock", style="primary")],
+        [InlineKeyboardButton(text="Unlimited Link / Instructions", callback_data="adm_addprod_deliv_inf", style="primary")],
+        [InlineKeyboardButton(text="< Cancel", callback_data="adm_home", style="danger")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_add_prod_input_keyboard() -> InlineKeyboardMarkup:
+    """Custom customer input requirement prompt during product creation."""
+    buttons = [
+        [InlineKeyboardButton(text="No, Standard Delivery", callback_data="adm_addprod_input_no", style="primary")],
+        [InlineKeyboardButton(text="Yes, Requires Custom Input (@username, ID)", callback_data="adm_addprod_input_yes", style="success")],
+        [InlineKeyboardButton(text="< Cancel", callback_data="adm_home", style="danger")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)

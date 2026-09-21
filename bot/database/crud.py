@@ -205,16 +205,22 @@ async def sync_aiverse_products(services: List[Dict[str, Any]], default_markup: 
                 updated_count += 1
             else:
                 # NEW item from API: created as INACTIVE (Pending Admin Review)
+                # Keep customer description clean without supplier IDs or wholesale costs!
                 suggested_retail = (cost * default_markup).quantize(Decimal("0.01"))
+                needs_input = any(w in name.lower() for w in ["username", "telegram", "uid", "link", "channel", "boost", "account", "profile"])
+                placeholder = "@username" if ("telegram" in name.lower() or "username" in name.lower()) else "Target Account / ID"
+
                 new_prod = Product(
                     category_id=default_cat.id,
                     name=name,
-                    description=f"Supplier ID: {sid}\nWholesale Cost: ${cost:.2f}\nLive API Stock: {stock}",
+                    description="Official digital activation service with automated instant delivery.",
                     price=suggested_retail,
                     wholesale_price=cost,
                     api_stock=stock,
                     delivery_type="api",
                     service_id=sid,
+                    requires_input=needs_input,
+                    input_placeholder=placeholder,
                     is_active=False  # MUST be reviewed & approved by admin first!
                 )
                 session.add(new_prod)
@@ -222,6 +228,40 @@ async def sync_aiverse_products(services: List[Dict[str, Any]], default_markup: 
 
         await session.commit()
         return {"created": created_count, "updated": updated_count}
+
+
+async def create_product(
+    category_id: int,
+    name: str,
+    price: Decimal,
+    description: str = "",
+    delivery_type: str = "stock",
+    requires_input: bool = False,
+    input_placeholder: str = "@username",
+    input_label: str = "Target Account / Username",
+    service_id: Optional[str] = None,
+    wholesale_price: Optional[Decimal] = None,
+    is_active: bool = True
+) -> Product:
+    """Create a new manual or API product in the database."""
+    async with async_session() as session:
+        prod = Product(
+            category_id=category_id,
+            name=name,
+            description=description,
+            price=price,
+            delivery_type=delivery_type,
+            requires_input=requires_input,
+            input_placeholder=input_placeholder,
+            input_label=input_label,
+            service_id=service_id,
+            wholesale_price=wholesale_price or Decimal("0.00"),
+            is_active=is_active
+        )
+        session.add(prod)
+        await session.commit()
+        await session.refresh(prod)
+        return prod
 
 
 async def get_pending_api_products(limit: int = 50) -> List[Product]:
@@ -252,9 +292,11 @@ async def update_api_product_review(
     name: Optional[str] = None,
     description: Optional[str] = None,
     category_id: Optional[int] = None,
-    is_active: Optional[bool] = None
+    is_active: Optional[bool] = None,
+    requires_input: Optional[bool] = None,
+    input_placeholder: Optional[str] = None
 ) -> Optional[Product]:
-    """Admin adjustments: change retail price, name, category, or approve/hide."""
+    """Admin adjustments: change retail price, name, category, input requirements, or approve/hide."""
     async with async_session() as session:
         stmt = select(Product).where(Product.id == product_id).with_for_update()
         product = (await session.execute(stmt)).scalar_one_or_none()
@@ -271,6 +313,10 @@ async def update_api_product_review(
             product.category_id = category_id
         if is_active is not None:
             product.is_active = is_active
+        if requires_input is not None:
+            product.requires_input = requires_input
+        if input_placeholder is not None:
+            product.input_placeholder = input_placeholder
 
         await session.commit()
         await session.refresh(product)
@@ -307,6 +353,9 @@ async def get_cart(user_id: int) -> List[Dict[str, Any]]:
                 "unit_price": unit_price,
                 "total_price": total_price,
                 "delivery_type": product.delivery_type,
+                "requires_input": product.requires_input,
+                "input_placeholder": product.input_placeholder,
+                "input_label": product.input_label,
             })
         return items
 
@@ -349,7 +398,8 @@ async def clear_cart(user_id: int) -> bool:
 
 async def checkout_cart_atomic(
     user_id: int,
-    promo_code_str: Optional[str] = None
+    promo_code_str: Optional[str] = None,
+    customer_inputs: Optional[Dict[int, str]] = None
 ) -> Tuple[bool, str, List[Dict[str, Any]]]:
     """
     Atomically purchases all items in the user's cart.
@@ -411,7 +461,7 @@ async def checkout_cart_atomic(
                 )).scalar_one_or_none()
 
                 if inf_stock:
-                    delivered_payload = f"🔗 {inf_stock.value}"
+                    delivered_payload = f"Access Details: {inf_stock.value}"
                 else:
                     # Pick limited rows
                     stock_rows = (await session.execute(
@@ -430,7 +480,7 @@ async def checkout_cart_atomic(
                     for s in stock_rows:
                         s.is_used = True
                         keys.append(s.value)
-                    delivered_payload = "\n".join([f"🔑 <code>{k}</code>" for k in keys])
+                    delivered_payload = "\n".join([f"Key: <code>{k}</code>" for k in keys])
             else:
                 from bot.services.aiverse_client import aiverse_client
                 api_res = await aiverse_client.create_order(
@@ -438,18 +488,19 @@ async def checkout_cart_atomic(
                     quantity=ci.quantity
                 )
                 if not api_res.get("success", False):
-                    err_msg = api_res.get("error", "Supplier order failed")
+                    err_msg = api_res.get("error", "Delivery failed. Please contact support.")
                     await session.rollback()
-                    return False, f"Supplier Delivery Error: {err_msg}", []
+                    return False, f"Delivery Notice: {err_msg}", []
 
                 prods_delivered = api_res.get("products", [])
                 if prods_delivered:
                     codes_str = "\n".join([f"<code>{p}</code>" for p in prods_delivered])
-                    delivered_payload = f"Supplier Order: <code>{api_res.get('order_id', 'N/A')}</code>\nDelivered Credentials:\n{codes_str}"
+                    delivered_payload = f"Digital License / Credentials:\n{codes_str}"
                 else:
-                    delivered_payload = f"Supplier Order: <code>{api_res.get('order_id', 'N/A')}</code> (Instant Delivery Processed)"
+                    delivered_payload = f"Order Ref: <code>{api_res.get('order_id', 'N/A')}</code>\nStatus: Activated Successfully"
 
             item_price = (Decimal(str(product.sale_price or product.price)) * ci.quantity).quantize(Decimal("0.01"))
+            c_input = (customer_inputs or {}).get(product.id)
 
             new_order = Order(
                 order_code=order_code,
@@ -459,6 +510,7 @@ async def checkout_cart_atomic(
                 total_price=item_price,
                 currency=BASE_CURRENCY,
                 delivered_data=delivered_payload,
+                customer_input=c_input,
                 status="completed"
             )
             session.add(new_order)
@@ -467,7 +519,8 @@ async def checkout_cart_atomic(
                 "product_name": product.name,
                 "quantity": ci.quantity,
                 "price": item_price,
-                "delivered_data": delivered_payload
+                "delivered_data": delivered_payload,
+                "customer_input": c_input
             })
 
         # Clear cart

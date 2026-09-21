@@ -92,51 +92,159 @@ async def cart_clear_all(call: CallbackQuery):
     await call.answer()
 
 
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+
+class CheckoutStates(StatesGroup):
+    waiting_customer_input = State()
+
+
 @router.callback_query(F.data == "cart_checkout")
-async def cart_checkout(call: CallbackQuery):
+async def cart_checkout(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     user = await get_user_by_id(user_id)
     lang = user.language if user else "en"
 
-    success, msg, orders = await checkout_cart_atomic(user_id)
+    items = await get_cart(user_id)
+    if not items:
+        await call.answer(t("cart_empty", lang), show_alert=True)
+        return
+
+    # Check for products requiring customer input
+    items_needing_input = [it for it in items if it.get("requires_input")]
+    fsm_data = await state.get_data()
+    customer_inputs = fsm_data.get("customer_inputs", {})
+
+    pending_item = next((it for it in items_needing_input if it["product_id"] not in customer_inputs), None)
+    if pending_item:
+        await state.update_data(pending_prod_id=pending_item["product_id"])
+        await state.set_state(CheckoutStates.waiting_customer_input)
+        placeholder = pending_item.get("input_placeholder") or "@username"
+        prompt = (
+            "<b>REQUIRED CUSTOMER INFORMATION</b>\n"
+            "────────────────────────\n"
+            f"Product: <b>{pending_item['name']}</b>\n\n"
+            f"Please send your <b>{placeholder}</b> in reply to this message:\n"
+            f"<i>(Example: @myusername or your player ID)</i>"
+            if lang == "en" else
+            "<b>ግዴታ የሚያስፈልግ መረጃ</b>\n"
+            "────────────────────────\n"
+            f"ዕቃ፡ <b>{pending_item['name']}</b>\n\n"
+            f"እባክዎ ለዚህ ዕቃ የሚያስፈልገውን <b>{placeholder}</b> ይላኩ:\n"
+            f"<i>(ለምሳሌ፡ @username ወይም የሂሳብ መለያ)</i>"
+        )
+        cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="< Cancel Checkout", callback_data="cart_cancel_checkout", style="danger")]
+        ])
+        await call.message.answer(prompt, reply_markup=cancel_kb, parse_mode="HTML")
+        await call.answer()
+        return
+
+    # All required inputs collected! Execute atomic purchase!
+    await execute_checkout(call.message, call.bot, user, items, customer_inputs, state)
+    await call.answer()
+
+
+@router.message(CheckoutStates.waiting_customer_input)
+async def process_checkout_customer_input(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    user = await get_user_by_id(user_id)
+    lang = user.language if user else "en"
+
+    input_val = message.text.strip()
+    if not input_val:
+        await message.answer("Please enter the required information to continue:")
+        return
+
+    data = await state.get_data()
+    prod_id = data.get("pending_prod_id")
+    customer_inputs = data.get("customer_inputs", {})
+    if prod_id:
+        customer_inputs[prod_id] = input_val
+    await state.update_data(customer_inputs=customer_inputs)
+
+    items = await get_cart(user_id)
+    items_needing_input = [it for it in items if it.get("requires_input")]
+    pending_item = next((it for it in items_needing_input if it["product_id"] not in customer_inputs), None)
+
+    if pending_item:
+        await state.update_data(pending_prod_id=pending_item["product_id"])
+        placeholder = pending_item.get("input_placeholder") or "@username"
+        prompt = (
+            "<b>REQUIRED CUSTOMER INFORMATION</b>\n"
+            "────────────────────────\n"
+            f"Product: <b>{pending_item['name']}</b>\n\n"
+            f"Please enter your <b>{placeholder}</b>:"
+        )
+        cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="< Cancel Checkout", callback_data="cart_cancel_checkout", style="danger")]
+        ])
+        await message.answer(prompt, reply_markup=cancel_kb, parse_mode="HTML")
+        return
+
+    # All collected! Execute atomic purchase
+    await execute_checkout(message, message.bot, user, items, customer_inputs, state)
+
+
+@router.callback_query(F.data == "cart_cancel_checkout")
+async def cancel_checkout_flow(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    text, kb = await render_cart_view(call.from_user.id)
+    await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await call.answer("Checkout cancelled.")
+
+
+async def execute_checkout(event_message: Message, bot, user, items: list, customer_inputs: dict, state: FSMContext):
+    user_id = user.telegram_id
+    lang = user.language or "en"
+
+    success, msg, orders = await checkout_cart_atomic(user_id, customer_inputs=customer_inputs)
+    await state.clear()
 
     if not success:
         if msg == "insufficient_balance":
-            cart_items = await get_cart(user_id)
-            total = sum(x["total_price"] for x in cart_items)
+            total = sum(x["total_price"] for x in items)
             err_text = t("insufficient_balance", lang, price=f"{CURRENCY_SYMBOL}{total:.2f}", balance=f"{CURRENCY_SYMBOL}{user.balance:.2f}", currency="")
-            await call.answer(err_text, show_alert=True)
-        elif "out_of_stock" in msg:
-            await call.answer(f"Notice: {msg}", show_alert=True)
+            await event_message.answer(err_text, parse_mode="HTML")
         else:
-            await call.answer(f"Notice: {msg}", show_alert=True)
+            await event_message.answer(f"Notice: {msg}", parse_mode="HTML")
         return
 
-    # Build delivery receipt
+    # Build clean delivery receipt - 100% white-labeled without supplier references
     order_details = []
     for o in orders:
+        c_in = o.get("customer_input")
+        input_line = f"• Provided Target: <code>{c_in}</code>\n" if c_in else ""
         order_details.append(
             f"<b>{o['product_name']}</b> (x{o['quantity']})\n"
             f"• Order Code: <code>{o['order_code']}</code>\n"
             f"• Price: <code>{CURRENCY_SYMBOL}{o['price']:.2f}</code>\n"
-            f"• Delivered Data:\n<code>{o['delivered_data']}</code>\n"
+            f"{input_line}"
+            f"• Delivered Details:\n<code>{o['delivered_data']}</code>\n"
         )
 
     receipt = t("checkout_success", lang, orders="\n".join(order_details))
-    await call.message.edit_text(receipt, parse_mode="HTML")
-    await call.answer("Order Completed Successfully", show_alert=False)
+    await event_message.answer(receipt, parse_mode="HTML")
 
     # Log to channel(s)
     order_targets = get_channel_list(ORDERS_CHANNEL_ID or LOGS_CHANNEL_ID)
     if order_targets:
+        items_summary = []
+        for o in orders:
+            c_in = o.get("customer_input")
+            c_tag = f" [Target: {c_in}]" if c_in else ""
+            items_summary.append(f"  - {o['product_name']} (x{o['quantity']}) — {CURRENCY_SYMBOL}{o['price']:.2f}{c_tag}")
+
         log_msg = (
             f"<b>NEW ORDER COMPLETED</b>\n"
             f"────────────────────────\n"
-            f"• Customer: <code>{user_id}</code> (@{call.from_user.username or 'N/A'})\n"
-            f"• Items:\n" + "\n".join([f"  - {o['product_name']} (x{o['quantity']}) — {CURRENCY_SYMBOL}{o['price']:.2f}" for o in orders])
+            f"• Customer: <code>{user_id}</code>\n"
+            f"• Items:\n" + "\n".join(items_summary)
         )
         for ch in order_targets:
             try:
-                await call.bot.send_message(ch, log_msg, parse_mode="HTML")
+                await bot.send_message(ch, log_msg, parse_mode="HTML")
             except Exception:
                 pass

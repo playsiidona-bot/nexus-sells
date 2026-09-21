@@ -103,15 +103,16 @@ async def process_crypto_amount(message: Message, state: FSMContext):
         )
         return
 
-    if not CRYPTO_PAY_TOKEN:
+    active_crypto_token = await get_setting("crypto_pay_token", CRYPTO_PAY_TOKEN)
+    if not active_crypto_token:
         await message.answer(
-            "⚠️ <b>Crypto payments are temporarily in maintenance.</b>\nPlease contact support or choose another payment method.",
+            "<b>Crypto payments are temporarily in maintenance.</b>\nPlease contact support or choose another payment method.",
             parse_mode="HTML"
         )
         await state.clear()
         return
 
-    client = CryptoPayClient(CRYPTO_PAY_TOKEN)
+    client = CryptoPayClient(active_crypto_token)
     try:
         invoice = await client.create_invoice(
             amount=float(amount),
@@ -122,7 +123,7 @@ async def process_crypto_amount(message: Message, state: FSMContext):
         )
     except CryptoPayAPIError as e:
         logger.error(f"CryptoPay API Error: {e}")
-        await message.answer(f"❌ Failed to generate invoice: {e.message}. Please try again later.")
+        await message.answer(f"Failed to generate invoice: {e.message}. Please try again later.")
         await state.clear()
         return
     finally:
@@ -132,17 +133,17 @@ async def process_crypto_amount(message: Message, state: FSMContext):
     bot_invoice_url = invoice.get("bot_invoice_url") or invoice.get("mini_app_invoice_url") or invoice.get("pay_url")
 
     card_text = (
-        f"💎 <b>Crypto Invoice Generated</b>\n\n"
-        f"💵 Amount: <b>{CURRENCY_SYMBOL}{amount:.2f} {BASE_CURRENCY}</b>\n"
-        f"🆔 Invoice ID: <code>#{invoice_id}</code>\n"
-        f"⏳ Valid for: <b>30 Minutes</b>\n\n"
+        f"<b>Crypto Invoice Generated</b>\n\n"
+        f"Amount: <b>{CURRENCY_SYMBOL}{amount:.2f} {BASE_CURRENCY}</b>\n"
+        f"Invoice ID: <code>#{invoice_id}</code>\n"
+        f"Valid for: <b>30 Minutes</b>\n\n"
         f"1. Click the button below to pay via <b>@CryptoBot</b> with USDT, TON, BTC, or LTC.\n"
         f"2. After payment completes, return here and click <b>Check Payment</b>."
     ) if lang == "en" else (
-        f"💎 <b>የክሪፕቶ ደረሰኝ ተዘጋጅቷል</b>\n\n"
-        f"💵 መጠን፡ <b>{CURRENCY_SYMBOL}{amount:.2f} {BASE_CURRENCY}</b>\n"
-        f"🆔 የደረሰኝ ቁጥር፡ <code>#{invoice_id}</code>\n"
-        f"⏳ የሚቆይበት ጊዜ፡ <b>30 ደቂቃ</b>\n\n"
+        f"<b>የክሪፕቶ ደረሰኝ ተዘጋጅቷል</b>\n\n"
+        f"መጠን፡ <b>{CURRENCY_SYMBOL}{amount:.2f} {BASE_CURRENCY}</b>\n"
+        f"የደረሰኝ ቁጥር፡ <code>#{invoice_id}</code>\n"
+        f"የሚቆይበት ጊዜ፡ <b>30 ደቂቃ</b>\n\n"
         f"1. ከታች ባለው ማስፈንጠሪያ @CryptoBot ላይ ክፍያዎን በ USDT, TON ወይም BTC ይፈጽሙ።\n"
         f"2. ክፍያውን እንደጨረሱ <b>Check Payment</b> የሚለውን ይጫኑ።"
     )
@@ -163,20 +164,21 @@ async def check_crypto_status(call: CallbackQuery):
 
     # Already redeemed?
     if await check_transaction_exists(txn_ref):
-        await call.answer("✅ This invoice has already been credited to your balance!", show_alert=True)
+        await call.answer("This invoice has already been credited to your balance!", show_alert=True)
         return
 
-    client = CryptoPayClient(CRYPTO_PAY_TOKEN)
+    active_crypto_token = await get_setting("crypto_pay_token", CRYPTO_PAY_TOKEN)
+    client = CryptoPayClient(active_crypto_token)
     try:
         invoice = await client.get_invoice(invoice_id)
     except Exception as e:
-        await call.answer("⚠️ Could not reach CryptoBot API. Please try again in a moment.", show_alert=True)
+        await call.answer("Could not reach CryptoBot API. Please try again in a moment.", show_alert=True)
         return
     finally:
         await client.close()
 
     if not invoice:
-        await call.answer("❌ Invoice not found or expired.", show_alert=True)
+        await call.answer("Invoice not found or expired.", show_alert=True)
         return
 
     status = invoice.get("status")
@@ -294,12 +296,13 @@ async def process_oxapay_amount(message: Message, state: FSMContext):
         await message.answer(f"⚠️ Amount must be between <b>{CURRENCY_SYMBOL}{MIN_DEPOSIT_AMOUNT:.2f}</b> and <b>{CURRENCY_SYMBOL}{MAX_DEPOSIT_AMOUNT:.2f}</b>.", parse_mode="HTML")
         return
 
-    if not OXAPAY_API_KEY:
-        await message.answer("⚠️ <b>OxaPay is not configured yet.</b>\nPlease set <code>OXAPAY_API_KEY</code> in settings or try another payment method.", parse_mode="HTML")
+    active_oxapay_key = await get_setting("oxapay_api_key", OXAPAY_API_KEY)
+    if not active_oxapay_key:
+        await message.answer("<b>OxaPay is not configured yet.</b>\nPlease choose another payment method or contact support.", parse_mode="HTML")
         await state.clear()
         return
 
-    client = OxaPayClient(OXAPAY_API_KEY)
+    client = OxaPayClient(active_oxapay_key)
     order_ref = f"ox_{user_id}_{int(amount*100)}"
     res = await client.create_invoice(
         amount=float(amount),
@@ -311,7 +314,7 @@ async def process_oxapay_amount(message: Message, state: FSMContext):
 
     if res.get("result") != 100 or not res.get("payLink"):
         err = res.get("message", "Unable to create invoice")
-        await message.answer(f"❌ Failed to create OxaPay invoice: {err}")
+        await message.answer(f"Failed to create OxaPay invoice: {err}")
         await state.clear()
         return
 
@@ -319,10 +322,10 @@ async def process_oxapay_amount(message: Message, state: FSMContext):
     pay_link = res.get("payLink")
 
     card_text = (
-        f"⚡ <b>OxaPay Crypto Invoice Generated</b>\n\n"
-        f"💵 Amount: <b>{CURRENCY_SYMBOL}{amount:.2f} {BASE_CURRENCY}</b>\n"
-        f"🆔 Track ID: <code>#{track_id}</code>\n"
-        f"⏳ Valid for: <b>60 Minutes</b>\n\n"
+        f"<b>OxaPay Crypto Invoice Generated</b>\n\n"
+        f"Amount: <b>{CURRENCY_SYMBOL}{amount:.2f} {BASE_CURRENCY}</b>\n"
+        f"Track ID: <code>#{track_id}</code>\n"
+        f"Valid for: <b>60 Minutes</b>\n\n"
         f"1. Click the button below to open the OxaPay payment page.\n"
         f"2. Pay with USDT, BTC, TON, LTC, or your preferred cryptocurrency.\n"
         f"3. Return here and tap <b>Check Payment</b> to instantly credit your balance."
@@ -342,10 +345,11 @@ async def check_oxapay_status(call: CallbackQuery):
     txn_ref = f"oxapay_{track_id}"
 
     if await check_transaction_exists(txn_ref):
-        await call.answer("✅ This invoice was already credited to your wallet!", show_alert=True)
+        await call.answer("This invoice was already credited to your wallet!", show_alert=True)
         return
 
-    client = OxaPayClient(OXAPAY_API_KEY)
+    active_oxapay_key = await get_setting("oxapay_api_key", OXAPAY_API_KEY)
+    client = OxaPayClient(active_oxapay_key)
     res = await client.inquiry_payment(track_id)
     await client.close()
 
@@ -441,12 +445,14 @@ async def process_cryptomus_amount(message: Message, state: FSMContext):
         await message.answer(f"⚠️ Amount must be between <b>{CURRENCY_SYMBOL}{MIN_DEPOSIT_AMOUNT:.2f}</b> and <b>{CURRENCY_SYMBOL}{MAX_DEPOSIT_AMOUNT:.2f}</b>.", parse_mode="HTML")
         return
 
-    if not CRYPTOMUS_MERCHANT_ID or not CRYPTOMUS_PAYMENT_KEY:
-        await message.answer("⚠️ <b>Cryptomus is not configured yet.</b>\nPlease set <code>CRYPTOMUS_MERCHANT_ID</code> and <code>CRYPTOMUS_PAYMENT_KEY</code> or try another method.", parse_mode="HTML")
+    active_cm_mid = await get_setting("cryptomus_merchant_id", CRYPTOMUS_MERCHANT_ID)
+    active_cm_key = await get_setting("cryptomus_payment_key", CRYPTOMUS_PAYMENT_KEY)
+    if not active_cm_mid or not active_cm_key:
+        await message.answer("<b>Cryptomus is not configured yet.</b>\nPlease choose another payment method or contact support.", parse_mode="HTML")
         await state.clear()
         return
 
-    client = CryptomusClient(CRYPTOMUS_MERCHANT_ID, CRYPTOMUS_PAYMENT_KEY)
+    client = CryptomusClient(active_cm_mid, active_cm_key)
     order_id = f"cm_{user_id}_{int(amount*100)}"
     res = await client.create_payment(
         amount=float(amount),
@@ -461,15 +467,15 @@ async def process_cryptomus_amount(message: Message, state: FSMContext):
 
     if res.get("state") != 0 or not pay_url:
         err = res.get("message", "Unable to create payment")
-        await message.answer(f"❌ Failed to create Cryptomus payment: {err}")
+        await message.answer(f"Failed to create Cryptomus payment: {err}")
         await state.clear()
         return
 
     card_text = (
-        f"🪙 <b>Cryptomus Payment Invoice Generated</b>\n\n"
-        f"💵 Amount: <b>{CURRENCY_SYMBOL}{amount:.2f} {BASE_CURRENCY}</b>\n"
-        f"🆔 Payment UUID: <code>{uuid}</code>\n"
-        f"⏳ Valid for: <b>60 Minutes</b>\n\n"
+        f"<b>Cryptomus Payment Invoice Generated</b>\n\n"
+        f"Amount: <b>{CURRENCY_SYMBOL}{amount:.2f} {BASE_CURRENCY}</b>\n"
+        f"Payment UUID: <code>{uuid}</code>\n"
+        f"Valid for: <b>60 Minutes</b>\n\n"
         f"1. Click the button below to open Cryptomus secure checkout.\n"
         f"2. Pay with USDT, BTC, ETH, TON, or your selected cryptocurrency.\n"
         f"3. Return here and tap <b>Check Payment</b> to credit your balance instantly."
@@ -489,10 +495,12 @@ async def check_cryptomus_status(call: CallbackQuery):
     txn_ref = f"cryptomus_{uuid}"
 
     if await check_transaction_exists(txn_ref):
-        await call.answer("✅ This payment was already credited to your wallet!", show_alert=True)
+        await call.answer("This payment was already credited to your wallet!", show_alert=True)
         return
 
-    client = CryptomusClient(CRYPTOMUS_MERCHANT_ID, CRYPTOMUS_PAYMENT_KEY)
+    active_cm_mid = await get_setting("cryptomus_merchant_id", CRYPTOMUS_MERCHANT_ID)
+    active_cm_key = await get_setting("cryptomus_payment_key", CRYPTOMUS_PAYMENT_KEY)
+    client = CryptomusClient(active_cm_mid, active_cm_key)
     res = await client.get_payment_info(uuid=uuid)
     await client.close()
 
@@ -590,12 +598,13 @@ async def process_nowpayments_amount(message: Message, state: FSMContext):
         await message.answer(f"⚠️ Amount must be between <b>{CURRENCY_SYMBOL}{MIN_DEPOSIT_AMOUNT:.2f}</b> and <b>{CURRENCY_SYMBOL}{MAX_DEPOSIT_AMOUNT:.2f}</b>.", parse_mode="HTML")
         return
 
-    if not NOWPAYMENTS_API_KEY:
-        await message.answer("⚠️ <b>NOWPayments is not configured yet.</b>\nPlease set <code>NOWPAYMENTS_API_KEY</code> or choose another payment method.", parse_mode="HTML")
+    active_np_key = await get_setting("nowpayments_api_key", NOWPAYMENTS_API_KEY)
+    if not active_np_key:
+        await message.answer("<b>NOWPayments is not configured yet.</b>\nPlease choose another payment method or contact support.", parse_mode="HTML")
         await state.clear()
         return
 
-    client = NOWPaymentsClient(NOWPAYMENTS_API_KEY)
+    client = NOWPaymentsClient(active_np_key)
     order_ref = f"np_{user_id}_{int(amount*100)}"
     res = await client.create_invoice(
         amount=float(amount),
@@ -610,14 +619,14 @@ async def process_nowpayments_amount(message: Message, state: FSMContext):
 
     if not invoice_url or not payment_id:
         err = res.get("message", "Unable to generate invoice")
-        await message.answer(f"❌ Failed to create NOWPayments invoice: {err}")
+        await message.answer(f"Failed to create NOWPayments invoice: {err}")
         await state.clear()
         return
 
     card_text = (
-        f"🌍 <b>NOWPayments Invoice Generated</b>\n\n"
-        f"💵 Amount: <b>{CURRENCY_SYMBOL}{amount:.2f} {BASE_CURRENCY}</b>\n"
-        f"🆔 Invoice ID: <code>{payment_id}</code>\n\n"
+        f"<b>NOWPayments Invoice Generated</b>\n\n"
+        f"Amount: <b>{CURRENCY_SYMBOL}{amount:.2f} {BASE_CURRENCY}</b>\n"
+        f"Invoice ID: <code>{payment_id}</code>\n\n"
         f"1. Click the button below to open the NOWPayments page.\n"
         f"2. Select from 300+ cryptocurrencies to complete payment.\n"
         f"3. Return here and tap <b>Check Payment</b> to credit your balance."
@@ -637,10 +646,11 @@ async def check_nowpayments_status(call: CallbackQuery):
     txn_ref = f"nowpayments_{payment_id}"
 
     if await check_transaction_exists(txn_ref):
-        await call.answer("✅ This payment has already been credited!", show_alert=True)
+        await call.answer("This invoice has already been credited to your wallet!", show_alert=True)
         return
 
-    client = NOWPaymentsClient(NOWPAYMENTS_API_KEY)
+    active_np_key = await get_setting("nowpayments_api_key", NOWPAYMENTS_API_KEY)
+    client = NOWPaymentsClient(active_np_key)
     res = await client.get_payment_status(payment_id)
     await client.close()
 

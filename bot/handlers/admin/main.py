@@ -13,18 +13,22 @@ from bot.database.crud import (
     get_ticket_by_code, replace_key_for_ticket, refund_ticket, reject_ticket,
     get_product_by_id, get_setting, set_setting, sync_aiverse_products,
     get_pending_api_products, get_approved_api_products, update_api_product_review,
-    delete_product, get_all_categories
+    delete_product, get_all_categories, create_product
 )
 from bot.keyboards.inline import (
     admin_main_keyboard, admin_settings_keyboard, admin_api_menu_keyboard,
     admin_pending_api_list_keyboard, admin_api_item_review_keyboard,
-    admin_categories_select_keyboard
+    admin_categories_select_keyboard, admin_api_keys_keyboard,
+    admin_add_prod_category_keyboard, admin_add_prod_skip_desc_keyboard,
+    admin_add_prod_delivery_keyboard, admin_add_prod_input_keyboard
 )
 from bot.services.aiverse_client import aiverse_client
 from bot.config import (
-    ADMIN_IDS, OWNER_ID, BASE_CURRENCY, TELEBIRR_RECEIVER_PHONE,
+    ADMIN_IDS, OWNER_ID, BASE_CURRENCY, CURRENCY_SYMBOL, TELEBIRR_RECEIVER_PHONE,
     TELEBIRR_RECEIVER_NAME, CBE_ACCOUNT_NUMBER, CBE_ACCOUNT_NAME,
-    FORCE_JOIN_CHANNEL, REVIEWS_CHANNEL_ID
+    FORCE_JOIN_CHANNEL, REVIEWS_CHANNEL_ID,
+    AIVERSE_API_KEY, CRYPTO_PAY_TOKEN, OXAPAY_API_KEY,
+    CRYPTOMUS_PAYMENT_KEY, CRYPTOMUS_MERCHANT_ID, NOWPAYMENTS_API_KEY
 )
 
 router = Router()
@@ -43,6 +47,14 @@ class AdminStates(StatesGroup):
     waiting_revchan = State()
     waiting_api_price = State()
     waiting_api_name = State()
+    # Dynamic API keys configuration
+    waiting_api_key_val = State()
+    # Add Product flow states
+    waiting_new_prod_name = State()
+    waiting_new_prod_desc = State()
+    waiting_new_prod_price = State()
+    waiting_new_prod_placeholder = State()
+    waiting_new_prod_inf_val = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -56,7 +68,8 @@ async def open_admin_panel(message: Message):
         return
 
     text = (
-        "⚙️ <b>Nexus Hub Admin Suite</b>\n\n"
+        "<b>Nexus Hub Admin Suite</b>\n"
+        "────────────────────────\n"
         "የቦቱን ዕቃዎች፣ ክምችት፣ ማስታወቂያዎችና አጠቃላይ ስታትስቲክስ ከዚህ ማስተዳደር ይችላሉ።"
     )
     await message.answer(text, reply_markup=admin_main_keyboard(), parse_mode="HTML")
@@ -78,12 +91,13 @@ async def show_stats(call: CallbackQuery):
         )).scalar() or 0
 
     stats_text = (
-        "📊 <b>Nexus Hub Real-Time Analytics:</b>\n\n"
-        f"👥 የተመዘገቡ ተጠቃሚዎች፡ <b>{users_count}</b>\n"
-        f"📦 ጠቅላላ የተሸጡ ትዕዛዞች፡ <b>{orders_count}</b>\n"
-        f"💰 ጠቅላላ የሽያጭ ገቢ፡ <b>{revenue} {BASE_CURRENCY}</b>\n"
-        f"🛍️ ንቁ ዕቃዎች (Products)፡ <b>{products_count}</b>\n"
-        f"🔑 የሚገኙ የቁልፎች ክምችት (Stock Keys)፡ <b>{active_stock}</b>"
+        "<b>Nexus Hub Real-Time Analytics:</b>\n"
+        "────────────────────────\n"
+        f"• የተመዘገቡ ተጠቃሚዎች፡ <b>{users_count}</b>\n"
+        f"• ጠቅላላ የተሸጡ ትዕዛዞች፡ <b>{orders_count}</b>\n"
+        f"• ጠቅላላ የሽያጭ ገቢ፡ <b>{CURRENCY_SYMBOL}{revenue:.2f} {BASE_CURRENCY}</b>\n"
+        f"• ንቁ ዕቃዎች (Products)፡ <b>{products_count}</b>\n"
+        f"• የሚገኙ የቁልፎች ክምችት (Stock Keys)፡ <b>{active_stock}</b>"
     )
     await call.message.edit_text(stats_text, reply_markup=admin_main_keyboard(), parse_mode="HTML")
     await call.answer()
@@ -93,7 +107,7 @@ async def show_stats(call: CallbackQuery):
 async def start_add_category(call: CallbackQuery, state: FSMContext):
     if not is_admin(call.from_user.id):
         return
-    await call.message.answer("📝 እባክዎ የአዲሱን ምድብ (Category) ስም እና Icon ያስገቡ:\n<i>ለምሳሌ፡ 🎮 Gaming Accounts</i>", parse_mode="HTML")
+    await call.message.answer("እባክዎ የአዲሱን ምድብ (Category) ስም ያስገቡ:\n<i>ለምሳሌ፡ Gaming Accounts</i>", parse_mode="HTML")
     await state.set_state(AdminStates.waiting_cat_name)
     await call.answer()
 
@@ -103,7 +117,7 @@ async def process_cat_name(message: Message, state: FSMContext):
     cat_name = message.text.strip()
     if cat_name:
         await create_category(name=cat_name)
-        await message.answer(f"✅ ምድብ <b>{cat_name}</b> በተሳካ ሁኔታ ተፈጥሯል!", parse_mode="HTML")
+        await message.answer(f"ምድብ <b>{cat_name}</b> በተሳካ ሁኔታ ተፈጥሯል!", parse_mode="HTML")
     await state.clear()
 
 
@@ -599,10 +613,11 @@ async def inspect_api_product(call: CallbackQuery):
         await call.answer("Product not found", show_alert=True)
         return
 
-    status_tag = "ACTIVE & PUBLISHED IN STORE" if product.is_active else "PENDING REVIEW (HIDDEN FROM USERS)"
+    status_tag = "ACTIVE IN STORE" if product.is_active else "PENDING REVIEW (HIDDEN)"
     cost = product.wholesale_price or Decimal("0.00")
     margin = product.price - cost
     margin_percent = ((margin / cost) * 100) if cost > 0 else 0
+    input_str = f"Required ({product.input_placeholder or '@username'})" if product.requires_input else "Not Required"
 
     text = (
         f"<b>API PRODUCT INSPECTION & REVIEW</b>\n"
@@ -613,8 +628,9 @@ async def inspect_api_product(call: CallbackQuery):
         f"• <b>Current Retail Price:</b> <code>${product.price:.2f}</code>\n"
         f"• <b>Your Profit Margin:</b> <code>+${margin:.2f} (+{margin_percent:.1f}%)</code>\n"
         f"• <b>Live API Stock:</b> <code>{product.api_stock}</code>\n"
+        f"• <b>Customer Input:</b> <code>{input_str}</code>\n"
         f"• <b>Status:</b> <b>{status_tag}</b></blockquote>\n\n"
-        f"<i>Adjust pricing or details below before approving:</i>"
+        f"<i>Adjust pricing, customer input requirement, or details below:</i>"
     )
     kb = admin_api_item_review_keyboard(product)
     await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -633,8 +649,27 @@ async def toggle_api_approval(call: CallbackQuery):
 
     new_active = not product.is_active
     await update_api_product_review(prod_id, is_active=new_active)
-    msg = "Product approved and published to store catalog!" if new_active else "Product hidden and deactivated from store catalog."
+    msg = "Product published to store catalog!" if new_active else "Product hidden from store catalog."
     await call.answer(msg, show_alert=True)
+
+    call.data = f"adm_api_inspect_{prod_id}"
+    await inspect_api_product(call)
+
+
+@router.callback_query(F.data.startswith("adm_api_toggleinput_"))
+async def toggle_api_required_input(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    prod_id = int(call.data.split("_")[3])
+    product = await get_product_by_id(prod_id)
+    if not product:
+        await call.answer("Product not found", show_alert=True)
+        return
+
+    new_val = not product.requires_input
+    await update_api_product_review(prod_id, requires_input=new_val)
+    status_str = "Customer input requirement: ENABLED" if new_val else "Customer input requirement: DISABLED"
+    await call.answer(status_str, show_alert=False)
 
     call.data = f"adm_api_inspect_{prod_id}"
     await inspect_api_product(call)
@@ -678,7 +713,7 @@ async def process_set_api_price(message: Message, state: FSMContext):
 
     await update_api_product_review(prod_id, price=new_price)
     await state.clear()
-    await message.answer(f"✅ Retail price updated to <b>${new_price:.2f}</b>!", parse_mode="HTML")
+    await message.answer(f"Retail price updated to <b>${new_price:.2f}</b>!", parse_mode="HTML")
 
 
 @router.callback_query(F.data.startswith("adm_api_setname_"))
@@ -699,7 +734,7 @@ async def process_set_api_name(message: Message, state: FSMContext):
     new_name = message.text.strip()
     if new_name and prod_id:
         await update_api_product_review(prod_id, name=new_name)
-        await message.answer(f"✅ Title updated to <b>{new_name}</b>!", parse_mode="HTML")
+        await message.answer(f"Title updated to <b>{new_name}</b>!", parse_mode="HTML")
     await state.clear()
 
 
@@ -735,5 +770,364 @@ async def process_delete_api_prod(call: CallbackQuery):
     await delete_product(prod_id)
     await call.answer("Product deleted from staging.", show_alert=True)
     await view_pending_api_products(call)
+
+
+# =====================================================================
+# ADD PRODUCT FLOW (STEP-BY-STEP)
+# =====================================================================
+
+@router.callback_query(F.data == "adm_add_prod")
+async def start_add_product(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    categories = await get_all_categories()
+    if not categories:
+        await call.answer("Please create at least one category first (+ Category).", show_alert=True)
+        return
+
+    kb = admin_add_prod_category_keyboard(categories)
+    text = (
+        "<b>ADD NEW PRODUCT (STEP 1/5)</b>\n"
+        "────────────────────────\n"
+        "Select the category for this new product:"
+    )
+    await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("adm_addprod_cat_"))
+async def process_addprod_cat(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    cat_id = int(call.data.replace("adm_addprod_cat_", ""))
+    await state.update_data(new_cat_id=cat_id)
+    await state.set_state(AdminStates.waiting_new_prod_name)
+    text = (
+        "<b>ADD NEW PRODUCT (STEP 2/5)</b>\n"
+        "────────────────────────\n"
+        "Enter the product title / name:\n"
+        "<i>Example: Telegram Premium (3 Months) or Steam Wallet $10</i>"
+    )
+    await call.message.edit_text(text, parse_mode="HTML")
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_new_prod_name)
+async def process_addprod_name(message: Message, state: FSMContext):
+    name = message.text.strip()
+    if not name:
+        await message.answer("Please enter a valid product title:")
+        return
+    await state.update_data(new_prod_name=name)
+    await state.set_state(AdminStates.waiting_new_prod_desc)
+    text = (
+        "<b>ADD NEW PRODUCT (STEP 3/5)</b>\n"
+        "────────────────────────\n"
+        f"Product: <b>{name}</b>\n\n"
+        "Send the product description, or tap <b>Skip Description</b> below:"
+    )
+    await message.answer(text, reply_markup=admin_add_prod_skip_desc_keyboard(), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "adm_addprod_skip_desc")
+async def process_addprod_skip_desc(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await state.update_data(new_prod_desc="")
+    await state.set_state(AdminStates.waiting_new_prod_price)
+    text = (
+        "<b>ADD NEW PRODUCT (STEP 4/5)</b>\n"
+        "────────────────────────\n"
+        f"Enter the selling price in {BASE_CURRENCY} (e.g. <code>9.99</code> or <code>250</code>):"
+    )
+    await call.message.edit_text(text, parse_mode="HTML")
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_new_prod_desc)
+async def process_addprod_desc(message: Message, state: FSMContext):
+    desc = message.html_text or message.text
+    await state.update_data(new_prod_desc=desc)
+    await state.set_state(AdminStates.waiting_new_prod_price)
+    text = (
+        "<b>ADD NEW PRODUCT (STEP 4/5)</b>\n"
+        "────────────────────────\n"
+        f"Enter the selling price in {BASE_CURRENCY} (e.g. <code>9.99</code> or <code>250</code>):"
+    )
+    await message.answer(text, parse_mode="HTML")
+
+
+@router.message(AdminStates.waiting_new_prod_price)
+async def process_addprod_price(message: Message, state: FSMContext):
+    raw = message.text.strip().replace("$", "").replace("ETB", "").replace(CURRENCY_SYMBOL, "")
+    try:
+        price = Decimal(raw)
+        if price <= 0:
+            raise ValueError()
+    except Exception:
+        await message.answer("Please enter a valid numeric price (e.g. <code>9.99</code> or <code>150</code>):", parse_mode="HTML")
+        return
+
+    await state.update_data(new_prod_price=str(price))
+    text = (
+        "<b>ADD NEW PRODUCT (STEP 5/5)</b>\n"
+        "────────────────────────\n"
+        "Select the delivery method for this product:\n\n"
+        "• <b>Stock / License Keys:</b> Specific codes or accounts pulled from inventory.\n"
+        "• <b>Unlimited Link / Instructions:</b> A permanent link, guide, or invite delivered automatically."
+    )
+    await message.answer(text, reply_markup=admin_add_prod_delivery_keyboard(), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "adm_addprod_deliv_stock")
+async def process_addprod_deliv_stock(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await state.update_data(new_deliv_type="stock")
+    text = (
+        "<b>CUSTOMER INPUT REQUIREMENT</b>\n"
+        "────────────────────────\n"
+        "Does this product require custom customer input upon purchase?\n\n"
+        "<i>(For example: customer's Telegram @username, player UID, account email, or profile link)</i>"
+    )
+    await call.message.edit_text(text, reply_markup=admin_add_prod_input_keyboard(), parse_mode="HTML")
+    await call.answer()
+
+
+@router.callback_query(F.data == "adm_addprod_deliv_inf")
+async def process_addprod_deliv_inf(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await state.update_data(new_deliv_type="stock_infinity")
+    await state.set_state(AdminStates.waiting_new_prod_inf_val)
+    text = (
+        "<b>UNLIMITED DELIVERY CONTENT</b>\n"
+        "────────────────────────\n"
+        "Send the permanent link, credentials, or instructions that every customer receives after purchase:"
+    )
+    await call.message.edit_text(text, parse_mode="HTML")
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_new_prod_inf_val)
+async def process_addprod_inf_val(message: Message, state: FSMContext):
+    inf_val = message.text.strip()
+    if not inf_val:
+        await message.answer("Please send the link or instructions to be delivered:")
+        return
+    await state.update_data(new_inf_val=inf_val)
+    text = (
+        "<b>CUSTOMER INPUT REQUIREMENT</b>\n"
+        "────────────────────────\n"
+        "Does this product require custom customer input upon purchase?\n\n"
+        "<i>(For example: customer's Telegram @username, player UID, account email, or profile link)</i>"
+    )
+    await message.answer(text, reply_markup=admin_add_prod_input_keyboard(), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "adm_addprod_input_yes")
+async def process_addprod_input_yes(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await state.update_data(new_requires_input=True)
+    await state.set_state(AdminStates.waiting_new_prod_placeholder)
+    text = (
+        "<b>SET CUSTOMER INPUT PROMPT</b>\n"
+        "────────────────────────\n"
+        "Enter the placeholder or instruction text shown to the customer.\n\n"
+        "<i>Examples:</i>\n"
+        "• <code>@username</code>\n"
+        "• <code>Telegram Username</code>\n"
+        "• <code>Player ID / UID</code>\n"
+        "• <code>Account Email</code>\n"
+        "• <code>Channel Link</code>"
+    )
+    await call.message.edit_text(text, parse_mode="HTML")
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_new_prod_placeholder)
+async def process_addprod_placeholder(message: Message, state: FSMContext):
+    placeholder = message.text.strip() or "@username"
+    await state.update_data(new_input_placeholder=placeholder)
+    await finalize_new_product(message, state)
+
+
+@router.callback_query(F.data == "adm_addprod_input_no")
+async def process_addprod_input_no(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await state.update_data(new_requires_input=False, new_input_placeholder="")
+    await finalize_new_product(call.message, state)
+    await call.answer()
+
+
+async def finalize_new_product(message: Message, state: FSMContext):
+    data = await state.get_data()
+    cat_id = data.get("new_cat_id")
+    name = data.get("new_prod_name")
+    desc = data.get("new_prod_desc", "")
+    price = Decimal(data.get("new_prod_price", "0.00"))
+    deliv_type = data.get("new_deliv_type", "stock")
+    requires_input = data.get("new_requires_input", False)
+    placeholder = data.get("new_input_placeholder", "@username")
+    inf_val = data.get("new_inf_val", "")
+
+    product = await create_product(
+        category_id=cat_id,
+        name=name,
+        description=desc,
+        price=price,
+        delivery_type="stock",
+        requires_input=requires_input,
+        input_placeholder=placeholder,
+        is_active=True
+    )
+
+    if deliv_type == "stock_infinity" and inf_val:
+        await add_product_stock_items(product.id, [inf_val], is_infinity=True)
+
+    input_tag = f"Required ({placeholder})" if requires_input else "None"
+    deliv_tag = "Unlimited Shared Link" if deliv_type == "stock_infinity" else "Inventory Keys"
+
+    text = (
+        "<b>PRODUCT CREATED SUCCESSFULLY</b>\n"
+        "────────────────────────\n"
+        f"• <b>Title:</b> {product.name}\n"
+        f"• <b>Price:</b> {CURRENCY_SYMBOL}{product.price:.2f} {BASE_CURRENCY}\n"
+        f"• <b>Delivery Type:</b> {deliv_tag}\n"
+        f"• <b>Customer Input:</b> {input_tag}\n"
+        f"• <b>Status:</b> Active in Store\n\n"
+        "You can add inventory keys now or return to Admin Suite:"
+    )
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="+ Add Stock Keys Now", callback_data="adm_add_stock", style="success")],
+        [InlineKeyboardButton(text="< Back to Admin", callback_data="adm_home", style="primary")]
+    ])
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+    await state.clear()
+
+
+# =====================================================================
+# DYNAMIC API KEYS & GATEWAY SETTINGS
+# =====================================================================
+
+@router.callback_query(F.data == "adm_api_keys")
+async def open_api_keys_menu(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+
+    aiverse_key = await get_setting("aiverse_api_key", AIVERSE_API_KEY)
+    cryptobot_tok = await get_setting("crypto_pay_token", CRYPTO_PAY_TOKEN)
+    oxapay_key = await get_setting("oxapay_api_key", OXAPAY_API_KEY)
+    nowpay_key = await get_setting("nowpayments_api_key", NOWPAYMENTS_API_KEY)
+    cryptomus_key = await get_setting("cryptomus_payment_key", CRYPTOMUS_PAYMENT_KEY)
+    cryptomus_mid = await get_setting("cryptomus_merchant_id", CRYPTOMUS_MERCHANT_ID)
+
+    def mask(val: str) -> str:
+        if not val:
+            return "Not Set"
+        if len(val) <= 6:
+            return "***"
+        return f"{val[:3]}...{val[-3:]}"
+
+    text = (
+        "<b>PAYMENT & SUPPLIER API CONFIGURATION</b>\n"
+        "────────────────────────\n"
+        "Manage gateway credentials dynamically without restarting the bot:\n\n"
+        f"• <b>AIVerseHub Key:</b> <code>{mask(aiverse_key)}</code>\n"
+        f"• <b>CryptoBot Token:</b> <code>{mask(cryptobot_tok)}</code>\n"
+        f"• <b>OxaPay Key:</b> <code>{mask(oxapay_key)}</code>\n"
+        f"• <b>NOWPayments Key:</b> <code>{mask(nowpay_key)}</code>\n"
+        f"• <b>Cryptomus Key:</b> <code>{mask(cryptomus_key)}</code>\n"
+        f"• <b>Cryptomus Merchant ID:</b> <code>{mask(cryptomus_mid)}</code>\n\n"
+        "Tap a button below to update its credentials:"
+    )
+    await call.message.edit_text(text, reply_markup=admin_api_keys_keyboard(), parse_mode="HTML")
+    await call.answer()
+
+
+KEY_NAME_MAP = {
+    "adm_key_aiverse": ("aiverse_api_key", "AIVerseHub API Key"),
+    "adm_key_cryptobot": ("crypto_pay_token", "CryptoBot Token"),
+    "adm_key_oxapay": ("oxapay_api_key", "OxaPay API Key"),
+    "adm_key_nowpayments": ("nowpayments_api_key", "NOWPayments API Key"),
+    "adm_key_cryptomus_key": ("cryptomus_payment_key", "Cryptomus Payment Key"),
+    "adm_key_cryptomus_mid": ("cryptomus_merchant_id", "Cryptomus Merchant ID"),
+}
+
+
+@router.callback_query(F.data.in_(KEY_NAME_MAP.keys()))
+async def prompt_set_api_key(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+
+    setting_key, friendly_title = KEY_NAME_MAP[call.data]
+    current_val = await get_setting(setting_key, "")
+    masked = f"{current_val[:3]}...{current_val[-3:]}" if current_val else "Not Configured"
+
+    await state.update_data(target_key=setting_key, target_title=friendly_title)
+    await state.set_state(AdminStates.waiting_api_key_val)
+
+    text = (
+        f"<b>CONFIGURE {friendly_title.upper()}</b>\n"
+        "────────────────────────\n"
+        f"Current Value: <code>{masked}</code>\n\n"
+        "Send the new API credential / token below:\n"
+        "<i>(Send 'clear' to remove the key, or /cancel to abort)</i>"
+    )
+    await call.message.edit_text(text, parse_mode="HTML")
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_api_key_val)
+async def process_save_api_key(message: Message, state: FSMContext):
+    data = await state.get_data()
+    target_key = data.get("target_key")
+    target_title = data.get("target_title", "API Key")
+
+    val = message.text.strip()
+    if val.lower() == "/cancel":
+        await state.clear()
+        await message.answer("Cancelled.")
+        return
+
+    save_val = "" if val.lower() == "clear" else val
+    await set_setting(target_key, save_val, f"Configured {target_title}")
+
+    # If AIVerseHub key was changed, refresh client immediately
+    if target_key == "aiverse_api_key":
+        aiverse_client.api_key = save_val
+
+    await state.clear()
+    status_str = "cleared" if not save_val else "saved successfully"
+    text = (
+        f"<b>{target_title.upper()} UPDATED</b>\n"
+        "────────────────────────\n"
+        f"The credential has been {status_str} and is now active in memory and database."
+    )
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Back to API Keys", callback_data="adm_api_keys", style="primary")],
+        [InlineKeyboardButton(text="< Admin Suite", callback_data="adm_home", style="danger")]
+    ])
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "adm_test_aiverse")
+async def test_aiverse_connection(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+
+    await call.answer("Testing connection to AIVerseHub...", show_alert=False)
+    res = await aiverse_client.get_me()
+    if "error" in res:
+        await call.answer(f"Connection Failed: {res['error']}", show_alert=True)
+        return
+
+    bal = res.get("wallet_balance", 0.0)
+    first_name = res.get("first_name", "Supplier Account")
+    await call.answer(f"Success! Connected to {first_name} | Balance: ${bal:.2f}", show_alert=True)
 
 

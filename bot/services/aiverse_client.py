@@ -16,6 +16,19 @@ class AIVerseClient:
         self.api_key = (api_key or "").strip()
         self.base_url = (base_url or "https://aiversehub.store").rstrip("/")
 
+    async def refresh_keys(self):
+        """Fetch latest API credentials configured in database settings."""
+        try:
+            from bot.database.crud import get_setting
+            db_key = await get_setting("aiverse_api_key", "")
+            if db_key and db_key.strip():
+                self.api_key = db_key.strip()
+            db_url = await get_setting("aiverse_base_url", "")
+            if db_url and db_url.strip():
+                self.base_url = db_url.strip().rstrip("/")
+        except Exception:
+            pass
+
     def _headers(self) -> Dict[str, str]:
         return {
             "X-API-Key": self.api_key,
@@ -28,6 +41,7 @@ class AIVerseClient:
         Fetch supplier account details and wallet balance.
         GET /api/v1/me -> {"chat_id": int, "first_name": str, "wallet_balance": float}
         """
+        await self.refresh_keys()
         if not self.api_key:
             return {"error": "AIVERSE_API_KEY not configured"}
 
@@ -47,6 +61,7 @@ class AIVerseClient:
         Fetch supplier products with live wholesale prices and available stock.
         GET /api/v1/products -> {"services": [{"service_id": str, "name": str, "price": float, "stock": int}]}
         """
+        await self.refresh_keys()
         if not self.api_key:
             return {"error": "AIVERSE_API_KEY not configured", "services": []}
 
@@ -72,6 +87,7 @@ class AIVerseClient:
         POST /api/v1/order -> {"service_id": str, "quantity": int}
         Response: {"success": bool, "order_id": str, "products": ["key1", ...], "total_cost": float}
         """
+        await self.refresh_keys()
         if not self.api_key:
             return {"success": False, "error": "AIVERSE_API_KEY not configured"}
 
@@ -97,6 +113,7 @@ class AIVerseClient:
         Retrieve order status and delivered credentials.
         GET /api/v1/order/{order_id}
         """
+        await self.refresh_keys()
         if not self.api_key:
             return {"error": "AIVERSE_API_KEY not configured"}
 

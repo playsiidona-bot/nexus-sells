@@ -49,6 +49,9 @@ class Product(Base):
     service_id = Column(String(64), nullable=True)  # AIVerse Hub service ID if delivery_type == "api"
     wholesale_price = Column(Numeric(12, 2), nullable=True, default=0.00)  # Supplier wholesale cost
     api_stock = Column(Integer, default=0)  # Live stock reported by external API
+    requires_input = Column(Boolean, default=False)  # True if product requires customer input (e.g. @username)
+    input_placeholder = Column(String(128), default="@username")  # Hint or placeholder shown to customer
+    input_label = Column(String(256), default="Target Account / Username")  # Field title
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -94,6 +97,7 @@ class Order(Base):
     total_price = Column(Numeric(12, 2), nullable=False)
     currency = Column(String(10), default="ETB")
     delivered_data = Column(Text, nullable=True)  # Keys, accounts, or details
+    customer_input = Column(Text, nullable=True)  # @username, account ID, player UID, link, etc.
     status = Column(String(32), default="completed")  # "completed", "pending", "failed"
     api_order_id = Column(String(128), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
