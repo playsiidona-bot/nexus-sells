@@ -1,3 +1,4 @@
+import ssl
 import logging
 import re
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
@@ -44,12 +45,12 @@ def build_engine(raw_url: str):
         except Exception:
             pass
 
-        # Configure SSL context and statement cache for Supabase / PgBouncer pooler
-        import ssl
+        # Configure SSL context to bypass self-signed certificate chain check on cloud hosts
         ssl_ctx = ssl.create_default_context()
         ssl_ctx.check_hostname = False
         ssl_ctx.verify_mode = ssl.CERT_NONE
 
+        # Configure SSL and statement cache for Supabase / PgBouncer pooler
         is_pooler = ":6543" in url or "pooler.supabase.com" in url
         connect_args = {
             "ssl": ssl_ctx,
