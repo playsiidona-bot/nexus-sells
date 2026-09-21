@@ -44,10 +44,15 @@ def build_engine(raw_url: str):
         except Exception:
             pass
 
-        # Configure SSL and statement cache for Supabase / PgBouncer pooler
+        # Configure SSL context and statement cache for Supabase / PgBouncer pooler
+        import ssl
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+
         is_pooler = ":6543" in url or "pooler.supabase.com" in url
         connect_args = {
-            "ssl": True,
+            "ssl": ssl_ctx,
             "statement_cache_size": 0,
             "prepared_statement_cache_size": 0
         }
