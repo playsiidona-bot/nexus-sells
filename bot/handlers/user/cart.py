@@ -2,7 +2,7 @@ from typing import Any
 from decimal import Decimal
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from bot.database.crud import (
     get_cart, update_cart_qty, clear_cart, checkout_cart_atomic, get_user_by_id
 )
@@ -221,11 +221,50 @@ async def execute_checkout(event_message: Message, bot, user, items: list, custo
     if not success:
         if msg == "insufficient_balance":
             total = sum(x["total_price"] for x in items)
-            err_text = t("insufficient_balance", lang, price=f"{CURRENCY_SYMBOL}{total:.2f}", balance=f"{CURRENCY_SYMBOL}{user.balance:.2f}", currency="")
+            user_fresh = await get_user_by_id(user_id)
+            current_bal = user_fresh.balance if user_fresh else Decimal("0.00")
+            err_text = t("insufficient_balance", lang, price=f"{CURRENCY_SYMBOL}{total:.2f}", balance=f"{CURRENCY_SYMBOL}{current_bal:.2f}", currency="")
             kb = insufficient_balance_keyboard(lang)
-            await event_message.answer(err_text, reply_markup=kb, parse_mode="HTML")
+            try:
+                await event_message.edit_text(err_text, reply_markup=kb, parse_mode="HTML")
+            except Exception:
+                await event_message.answer(err_text, reply_markup=kb, parse_mode="HTML")
+        elif msg.startswith("out_of_stock"):
+            prod_name = msg.replace("out_of_stock:", "").strip()
+            err_text = (
+                f"<b>ክምችት አልቋል (Out of Stock)</b>\n"
+                f"────────────────────────\n"
+                f"ይቅርታ፣ <b>{prod_name}</b> በአሁኑ ሰዓት በቂ ክምችት የለውም።\n"
+                f"እባክዎ ዘንቢልዎን ያፅዱ ወይም ሌላ ዕቃ ይምረጡ።"
+                if lang == "am" else
+                f"<b>OUT OF STOCK</b>\n"
+                f"────────────────────────\n"
+                f"Sorry, <b>{prod_name}</b> is currently out of stock.\n"
+                f"Please update your cart or choose another item."
+            )
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="ዘንቢል አፅዳ" if lang == "am" else "Clear Cart", callback_data="cart_clear", style="danger")],
+                [InlineKeyboardButton(text="< ወደ ካታሎግ" if lang == "am" else "< Back to Catalog", callback_data="catalog_home", style="primary")]
+            ])
+            try:
+                await event_message.edit_text(err_text, reply_markup=kb, parse_mode="HTML")
+            except Exception:
+                await event_message.answer(err_text, reply_markup=kb, parse_mode="HTML")
         else:
-            await event_message.answer(f"Notice: {msg}", parse_mode="HTML")
+            err_text = (
+                f"<b>ትዕዛዙን ማጠናቀቅ አልተቻለም</b>\n"
+                f"────────────────────────\n"
+                f"{msg}"
+                if lang == "am" else
+                f"<b>Notice:</b> {msg}"
+            )
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="< ወደ ካታሎግ" if lang == "am" else "< Back to Catalog", callback_data="catalog_home", style="primary")]
+            ])
+            try:
+                await event_message.edit_text(err_text, reply_markup=kb, parse_mode="HTML")
+            except Exception:
+                await event_message.answer(err_text, reply_markup=kb, parse_mode="HTML")
         return
 
     # Build clean delivery receipt - 100% white-labeled without supplier references
@@ -242,7 +281,13 @@ async def execute_checkout(event_message: Message, bot, user, items: list, custo
         )
 
     receipt = t("checkout_success", lang, orders="\n".join(order_details))
-    await event_message.answer(receipt, parse_mode="HTML")
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< ወደ ካታሎግ" if lang == "am" else "< Back to Catalog", callback_data="catalog_home", style="primary")]
+    ])
+    try:
+        await event_message.edit_text(receipt, reply_markup=back_kb, parse_mode="HTML")
+    except Exception:
+        await event_message.answer(receipt, reply_markup=back_kb, parse_mode="HTML")
 
     # Log to channel(s)
     order_targets = get_channel_list(ORDERS_CHANNEL_ID or LOGS_CHANNEL_ID)

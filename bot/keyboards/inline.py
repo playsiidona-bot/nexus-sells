@@ -49,9 +49,11 @@ def product_detail_keyboard(product_id: int, stock_count: int, lang: str = "en")
     """Product detail view with colored action buttons."""
     buttons = []
     if stock_count > 0:
+        buy_text = "Instant Buy" if lang == "en" else "በቅጽበት ግዛ"
+        cart_text = "+ Add to Cart" if lang == "en" else "+ ወደ ዘንቢል"
         buttons.append([
-            InlineKeyboardButton(text="Instant Buy", callback_data=f"buy_now_{product_id}", style="success"),  # Green
-            InlineKeyboardButton(text="+ Add to Cart", callback_data=f"cart_add_{product_id}", style="primary")  # Blue
+            InlineKeyboardButton(text=buy_text, callback_data=f"buy_now_{product_id}", style="success"),  # Green
+            InlineKeyboardButton(text=cart_text, callback_data=f"cart_add_{product_id}", style="primary")  # Blue
         ])
     else:
         btn_notify_text = "Notify When Available" if lang == "en" else "ስቶክ ሲገባ አሳውቀኝ"
@@ -59,9 +61,11 @@ def product_detail_keyboard(product_id: int, stock_count: int, lang: str = "en")
             InlineKeyboardButton(text=btn_notify_text, callback_data=f"notify_restock_{product_id}", style="primary")  # Blue
         ])
 
+    rev_text = "Reviews & Ratings" if lang == "en" else "አስተያየቶችና ደረጃ"
+    back_text = "< Back to Catalog" if lang == "en" else "< ወደ ካታሎግ"
     buttons.append([
-        InlineKeyboardButton(text="Reviews & Ratings", callback_data=f"reviews_{product_id}", style="primary"),
-        InlineKeyboardButton(text="< Back to Catalog", callback_data="catalog_home", style="danger")  # Red
+        InlineKeyboardButton(text=rev_text, callback_data=f"reviews_{product_id}", style="primary"),
+        InlineKeyboardButton(text=back_text, callback_data="catalog_home", style="danger")  # Red
     ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -113,6 +117,7 @@ def admin_ticket_keyboard(ticket_code: str) -> InlineKeyboardMarkup:
 def cart_keyboard(cart_items: List[Dict[str, Any]], lang: str = "en") -> InlineKeyboardMarkup:
     """In-place updatable cart controls with refresh and balanced colors."""
     buttons = []
+    del_text = "Delete" if lang == "en" else "አስወግድ"
     for item in cart_items:
         cid = item["cart_id"]
         qty = item["quantity"]
@@ -121,19 +126,24 @@ def cart_keyboard(cart_items: List[Dict[str, Any]], lang: str = "en") -> InlineK
             InlineKeyboardButton(text="-", callback_data=f"cart_dec_{cid}", style="danger"),       # Red
             InlineKeyboardButton(text=f"{name} x{qty}", callback_data=f"cart_info_{cid}"),         # Default
             InlineKeyboardButton(text="+", callback_data=f"cart_inc_{cid}", style="success"),      # Green
-            InlineKeyboardButton(text="Delete", callback_data=f"cart_del_{cid}", style="danger")   # Red
+            InlineKeyboardButton(text=del_text, callback_data=f"cart_del_{cid}", style="danger")   # Red
         ])
+
+    chk_text = "Proceed to Checkout" if lang == "en" else "ክፍያ ፈጽም (Checkout)"
+    ref_text = "Refresh Cart" if lang == "en" else "ዘንቢል አድስ"
+    clr_text = "Clear Cart" if lang == "en" else "ዘንቢል አፅዳ"
+    back_text = "< Back to Catalog" if lang == "en" else "< ወደ ካታሎግ"
 
     if cart_items:
-        buttons.append([InlineKeyboardButton(text="Proceed to Checkout", callback_data="cart_checkout", style="success")])  # Green
+        buttons.append([InlineKeyboardButton(text=chk_text, callback_data="cart_checkout", style="success")])  # Green
         buttons.append([
-            InlineKeyboardButton(text="Refresh Cart", callback_data="refresh_cart", style="primary"),                         # Blue
-            InlineKeyboardButton(text="Clear Cart", callback_data="cart_clear", style="danger")                                # Red
+            InlineKeyboardButton(text=ref_text, callback_data="refresh_cart", style="primary"),                         # Blue
+            InlineKeyboardButton(text=clr_text, callback_data="cart_clear", style="danger")                                # Red
         ])
     else:
-        buttons.append([InlineKeyboardButton(text="Refresh Cart", callback_data="refresh_cart", style="primary")])
+        buttons.append([InlineKeyboardButton(text=ref_text, callback_data="refresh_cart", style="primary")])
 
-    buttons.append([InlineKeyboardButton(text="< Back to Catalog", callback_data="catalog_home", style="primary")])          # Blue
+    buttons.append([InlineKeyboardButton(text=back_text, callback_data="catalog_home", style="primary")])          # Blue
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -436,6 +446,15 @@ def admin_add_prod_input_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="No, Standard Delivery", callback_data="adm_addprod_input_no", style="primary")],
         [InlineKeyboardButton(text="Yes, Requires Custom Input (@username, ID)", callback_data="adm_addprod_input_yes", style="success")],
         [InlineKeyboardButton(text="< Cancel", callback_data="adm_home", style="danger")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_add_prod_skip_stock_keyboard(prod_id: int) -> InlineKeyboardMarkup:
+    """Option to skip stock adding or finish product creation."""
+    buttons = [
+        [InlineKeyboardButton(text="ለጊዜው እለፍ (Skip Stock)", callback_data=f"adm_skip_add_stock_{prod_id}", style="primary")],
+        [InlineKeyboardButton(text="< ወደ አስተዳዳሪ ክፍል", callback_data="adm_home", style="danger")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

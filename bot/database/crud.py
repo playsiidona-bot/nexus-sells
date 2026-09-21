@@ -220,12 +220,20 @@ async def add_product_stock_items(product_id: int, items: List[str], is_infinity
     import re
     async with async_session() as session:
         added = 0
-        for item in items:
-            sub_items = [x.strip() for x in re.split(r'[\n,]+', str(item)) if x.strip()]
-            for val in sub_items:
-                stock = ProductStock(product_id=product_id, value=val, is_infinity=is_infinity)
-                session.add(stock)
-                added += 1
+        if is_infinity:
+            for item in items:
+                val = str(item).strip()
+                if val:
+                    stock = ProductStock(product_id=product_id, value=val, is_infinity=True)
+                    session.add(stock)
+                    added += 1
+        else:
+            for item in items:
+                sub_items = [x.strip() for x in re.split(r'[\n,]+', str(item)) if x.strip()]
+                for val in sub_items:
+                    stock = ProductStock(product_id=product_id, value=val, is_infinity=False)
+                    session.add(stock)
+                    added += 1
         await session.commit()
         return added
 

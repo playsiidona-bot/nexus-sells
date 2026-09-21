@@ -27,6 +27,7 @@ from bot.keyboards.inline import (
     admin_categories_select_keyboard, admin_api_keys_keyboard,
     admin_add_prod_category_keyboard, admin_add_prod_skip_desc_keyboard,
     admin_add_prod_delivery_keyboard, admin_add_prod_input_keyboard,
+    admin_add_prod_skip_stock_keyboard,
     admin_category_manager_keyboard, admin_category_detail_keyboard,
     admin_product_manager_keyboard, admin_product_detail_keyboard,
     admin_usdt_wallets_keyboard, admin_users_list_keyboard, admin_user_detail_keyboard
@@ -232,7 +233,14 @@ async def process_stock_keys(message: Message, state: FSMContext):
         reply = f"<b>{added}</b> ስቶክ (ቁልፍ/ሊንክ) ወደ <b>{prod_name}</b> ተጨምሯል!"
         if notified > 0:
             reply += f"\nለ <b>{notified}</b> ተጠቃሚዎች የክምችት ማሳወቂያ (Restock Alert) ተልኳል!"
-        await message.answer(reply, parse_mode="HTML")
+
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="የዕቃውን ዝርዝር እይ", callback_data=f"adm_proddetail_{prod_id}", style="primary")],
+            [InlineKeyboardButton(text="+ ተጨማሪ ስቶክ ጨምር", callback_data=f"adm_prod_stock_{prod_id}", style="success")],
+            [InlineKeyboardButton(text="< ወደ አስተዳዳሪ ክፍል", callback_data="adm_home", style="danger")]
+        ])
+        await message.answer(reply, reply_markup=kb, parse_mode="HTML")
     else:
         await message.answer("ምንም ትክክለኛ ስቶክ አልተገኘም። እባክዎ በኮማ (,) ወይም በአዲስ መስመር ለይተው እንደገና ይሞክሩ።")
     await state.clear()
@@ -1018,46 +1026,96 @@ async def finalize_new_product(message: Message, state: FSMContext):
     cat_id = data.get("new_cat_id")
     name = data.get("new_prod_name")
     desc = data.get("new_prod_desc", "")
-    price = Decimal(data.get("new_prod_price", "0.00"))
+    price_val = data.get("new_prod_price", "0.00")
+    try:
+        price = Decimal(str(price_val))
+    except Exception:
+        price = Decimal("0.00")
+
     deliv_type = data.get("new_deliv_type", "stock")
     requires_input = data.get("new_requires_input", False)
     placeholder = data.get("new_input_placeholder", "@username")
     inf_val = data.get("new_inf_val", "")
 
-    product = await create_product(
-        category_id=cat_id,
-        name=name,
-        description=desc,
-        price=price,
-        delivery_type="stock",
-        requires_input=requires_input,
-        input_placeholder=placeholder,
-        is_active=True
-    )
+    try:
+        product = await create_product(
+            category_id=cat_id,
+            name=name,
+            description=desc,
+            price=price,
+            delivery_type="stock",
+            requires_input=requires_input,
+            input_placeholder=placeholder,
+            is_active=True
+        )
+    except Exception as exc:
+        logger.error(f"Error creating product: {exc}")
+        await message.answer(f"ምርቱን መፍጠር አልተቻለም: {exc}")
+        await state.clear()
+        return
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     if deliv_type == "stock_infinity" and inf_val:
         await add_product_stock_items(product.id, [inf_val], is_infinity=True)
+        text = (
+            "<b>ምርቱ በተሳካ ሁኔታ ተፈጥሯል</b>\n"
+            "────────────────────────\n"
+            f"• <b>ስም:</b> {product.name}\n"
+            f"• <b>ዋጋ:</b> {CURRENCY_SYMBOL}{product.price:.2f} {BASE_CURRENCY}\n"
+            f"• <b>የአሰጣጥ ዘዴ:</b> ቋሚ ሊንክ / መመሪያ (Unlimited)\n"
+            f"• <b>የተጠቃሚ መረጃ:</b> {'አስፈላጊ (' + placeholder + ')' if requires_input else 'አያስፈልግም'}\n"
+            f"• <b>ሁኔታ:</b> ለሽያጭ ንቁ (Active)\n\n"
+            "የማይያልቅ ቋሚ መረጃ ተመዝግቧል። አሁን ዕቃው በካታሎግ ውስጥ ለደንበኞች ዝግጁ ሆኗል።"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="የዕቃውን ዝርዝር እይ", callback_data=f"adm_proddetail_{product.id}", style="primary")],
+            [InlineKeyboardButton(text="< ወደ አስተዳዳሪ ክፍል", callback_data="adm_home", style="danger")]
+        ])
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
+        await state.clear()
+        return
 
-    input_tag = f"Required ({placeholder})" if requires_input else "None"
-    deliv_tag = "Unlimited Shared Link" if deliv_type == "stock_infinity" else "Inventory Keys"
+    # Standard stock keys: Prompt admin immediately for keys so setup is 100% completed!
+    await state.update_data(prod_id=product.id)
+    await state.set_state(AdminStates.waiting_stock_keys)
 
     text = (
-        "<b>PRODUCT CREATED SUCCESSFULLY</b>\n"
+        "<b>ምርቱ በተሳካ ሁኔታ ተፈጥሯል</b>\n"
         "────────────────────────\n"
-        f"• <b>Title:</b> {product.name}\n"
-        f"• <b>Price:</b> {CURRENCY_SYMBOL}{product.price:.2f} {BASE_CURRENCY}\n"
-        f"• <b>Delivery Type:</b> {deliv_tag}\n"
-        f"• <b>Customer Input:</b> {input_tag}\n"
-        f"• <b>Status:</b> Active in Store\n\n"
-        "You can add inventory keys now or return to Admin Suite:"
+        f"• <b>ስም:</b> {product.name}\n"
+        f"• <b>ዋጋ:</b> {CURRENCY_SYMBOL}{product.price:.2f} {BASE_CURRENCY}\n"
+        f"• <b>የአሰጣጥ ዘዴ:</b> የቁልፍ/ሊንክ ክምችት (Stock Keys)\n"
+        f"• <b>የተጠቃሚ መረጃ:</b> {'አስፈላጊ (' + placeholder + ')' if requires_input else 'አያስፈልግም'}\n\n"
+        "አሁን ለዚህ ምርት ስቶክ (ቁልፎችን፣ ሊንኮችን ወይም አካውንቶችን) በኮማ (,) ወይም በአዲስ መስመር ለይተው ይላኩ (Batch paste):\n"
+        "<i>(በኋላ ለመጨመር ከፈለጉ 'ለጊዜው እለፍ' የሚለውን ይጫኑ)</i>"
     )
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="+ Add Stock Keys Now", callback_data="adm_add_stock", style="success")],
-        [InlineKeyboardButton(text="< Back to Admin", callback_data="adm_home", style="primary")]
-    ])
+    kb = admin_add_prod_skip_stock_keyboard(product.id)
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("adm_skip_add_stock_"))
+async def process_skip_add_stock(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    prod_id_str = call.data.replace("adm_skip_add_stock_", "")
     await state.clear()
+    prod_id = int(prod_id_str) if prod_id_str.isdigit() else 0
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    text = (
+        "<b>ምርቱ ያለ ስቶክ ተመዝግቧል</b>\n"
+        "────────────────────────\n"
+        "በኋላ በማንኛውም ሰዓት ከምርት ማኔጀር ላይ ስቶክ መጨመር ይችላሉ።"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="+ ስቶክ ጨምር", callback_data=f"adm_prod_stock_{prod_id}", style="success")],
+        [InlineKeyboardButton(text="< ወደ አስተዳዳሪ ክፍል", callback_data="adm_home", style="primary")]
+    ])
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        await call.message.answer(text, reply_markup=kb, parse_mode="HTML")
+    await call.answer()
 
 
 # =====================================================================
