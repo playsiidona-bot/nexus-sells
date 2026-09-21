@@ -9,7 +9,8 @@ from aiogram.fsm.state import State, StatesGroup
 
 from bot.database.crud import (
     get_user_by_id, add_user_balance, check_transaction_exists,
-    save_payment_receipt, get_setting
+    save_payment_receipt, get_setting, is_payment_link_or_txn_used,
+    record_used_payment_link
 )
 from bot.keyboards.inline import (
     deposit_methods_keyboard, crypto_invoice_keyboard,
@@ -17,7 +18,10 @@ from bot.keyboards.inline import (
     usdt_deposit_keyboard
 )
 from bot.services.i18n import t
-from bot.services.verifier import verify_receipt_url
+from bot.services.verifier import (
+    verify_payment_receipt, verify_receipt_url,
+    payment_flood_protector, extract_and_normalize_payment_input
+)
 from bot.services.cryptopay import CryptoPayClient, CryptoPayAPIError
 from bot.services.oxapay import OxaPayClient
 from bot.services.cryptomus import CryptomusClient
@@ -887,48 +891,134 @@ async def process_receipt_submission(message: Message, state: FSMContext):
     user = await get_user_by_id(user_id)
     lang = user.language if user else "en"
 
-    raw_text = (message.text or "").strip()
-    if not raw_text.startswith("http"):
-        await message.answer("⚠️ Please send the full bank receipt URL (e.g. starting with https://).")
+    # 1. Flood protection check
+    is_flooding, flood_reason, wait_seconds = payment_flood_protector.check_flood(user_id, lang=lang)
+    if is_flooding:
+        await message.answer(flood_reason, parse_mode="HTML")
         return
 
-    status_msg = await message.answer(t("verifying_receipt", lang))
-    res = await verify_receipt_url(raw_text)
+    raw_text = (message.text or "").strip()
+    norm_url, detected_provider, candidate_txn_id, orig_url = extract_and_normalize_payment_input(raw_text)
+
+    data = await state.get_data()
+    expected_provider = data.get("provider") or detected_provider
+
+    if not norm_url or (detected_provider == "unknown" and not expected_provider):
+        await message.answer(
+            "እባክዎ ትክክለኛ የባንክ ደረሰኝ ሊንክ (SMS Link) ወይም የግብይት ቁጥር (Transaction ID) ያስገቡ።"
+            if lang == "am" else
+            "Please send a valid bank receipt URL (SMS link) or Transaction Reference ID."
+        )
+        return
+
+    # 2. Duplicate check before making outbound requests
+    is_used, duplicate_reason = await is_payment_link_or_txn_used(norm_url, candidate_txn_id)
+    if is_used:
+        payment_flood_protector.record_failure(user_id)
+        await message.answer(
+            duplicate_reason or (t("receipt_duplicate", lang) if lang == "am" else "This receipt link or transaction has already been used."),
+            parse_mode="HTML"
+        )
+        await state.clear()
+        return
+
+    # 3. Record attempt in flood tracker
+    payment_flood_protector.record_attempt(user_id)
+
+    # 4. Fetch dynamic receiver configuration from database or config
+    custom_tele = await get_setting("telebirr_account")
+    phone = TELEBIRR_RECEIVER_PHONE
+    if custom_tele and "," in custom_tele:
+        phone = custom_tele.split(",", 1)[0].strip()
+    elif custom_tele:
+        phone = custom_tele.strip()
+
+    custom_cbe = await get_setting("cbe_account")
+    account = CBE_ACCOUNT_NUMBER
+    if custom_cbe and "," in custom_cbe:
+        account = custom_cbe.split(",", 1)[0].strip()
+    elif custom_cbe:
+        account = custom_cbe.strip()
+
+    status_msg = await message.answer(t("verifying_receipt", lang), parse_mode="HTML")
+
+    # 5. Run Auto-Verifier Engine
+    res = await verify_payment_receipt(
+        raw_input=raw_text,
+        expected_provider=expected_provider,
+        expected_telebirr=phone,
+        expected_cbe=account,
+        min_amount=MIN_DEPOSIT_AMOUNT
+    )
 
     if not res.get("valid"):
-        err = res.get("message", "Invalid Receipt")
+        payment_flood_protector.record_failure(user_id)
+        err = res.get("message") or "Invalid Receipt"
         await status_msg.edit_text(t("receipt_failed", lang, reason=err), parse_mode="HTML")
         await state.clear()
         return
 
-    txn_id = res.get("txn_id")
-    amount = Decimal(str(res.get("amount", 0.0)))
-    provider = res.get("provider", "bank")
+    # 6. Verification successful!
+    payment_flood_protector.record_success(user_id)
 
-    if await check_transaction_exists(txn_id):
+    final_txn_id = res["txn_id"]
+    final_amount = Decimal(str(res["amount"]))
+    final_provider = res["provider"]
+    final_norm_url = res["normalized_url"]
+
+    # Final concurrency race-condition check
+    is_used_final, _ = await is_payment_link_or_txn_used(final_norm_url, final_txn_id)
+    if is_used_final:
         await status_msg.edit_text(t("receipt_duplicate", lang), parse_mode="HTML")
         await state.clear()
         return
 
-    ok, new_balance = await add_user_balance(user_id, amount)
+    ok, new_balance = await add_user_balance(user_id, final_amount)
     if not ok:
-        await status_msg.edit_text("❌ Database error. Please contact support.")
+        await status_msg.edit_text("የዳታቤዝ ስህተት አጋጥሟል። እባክዎ ድጋፍ ሰጪ ያነጋግሩ።" if lang == "am" else "Database error. Please contact support.")
         await state.clear()
         return
 
+    # Permanently save consumed link & receipt to prevent reuse
+    await record_used_payment_link(
+        user_id=user_id,
+        provider=final_provider,
+        normalized_url=final_norm_url,
+        original_url=raw_text,
+        transaction_id=final_txn_id,
+        amount=final_amount
+    )
+
     await save_payment_receipt(
         user_id=user_id,
-        provider=provider,
-        transaction_id=txn_id,
-        amount=amount,
-        sender_name=res.get("recipientName", ""),
-        raw_details=str(res)
+        provider=final_provider,
+        transaction_id=final_txn_id,
+        amount=final_amount,
+        sender_name=res.get("sender_name", ""),
+        raw_details=str(res),
+        status="approved",
+        receipt_url=final_norm_url
     )
 
     await status_msg.edit_text(
-        t("receipt_success", lang, amount=amount, currency=BASE_CURRENCY, txn_id=txn_id, new_balance=new_balance),
+        t("receipt_success", lang, amount=final_amount, currency=BASE_CURRENCY, txn_id=final_txn_id, new_balance=new_balance),
         parse_mode="HTML"
     )
+
+    # Optional channel notifications
+    log_text = (
+        f"<b>Local Deposit Approved ({final_provider.upper()})</b>\n"
+        f"User: <code>{user_id}</code>\n"
+        f"Amount: <code>+{final_amount} {BASE_CURRENCY}</code>\n"
+        f"Txn ID: <code>{final_txn_id}</code>\n"
+        f"Link: <code>{final_norm_url}</code>"
+    )
+    if PAYMENTS_CHANNEL_ID:
+        try:
+            await message.bot.send_message(PAYMENTS_CHANNEL_ID, log_text, parse_mode="HTML")
+        except Exception:
+            pass
+
     await state.clear()
 
 

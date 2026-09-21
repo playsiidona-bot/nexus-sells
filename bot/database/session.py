@@ -48,6 +48,11 @@ async def init_db():
             pass
 
         try:
+            await conn.execute(text("ALTER TABLE payment_receipts ADD COLUMN receipt_url TEXT"))
+        except Exception:
+            pass
+
+        try:
             await conn.execute(text(
                 "UPDATE products SET description = 'Official digital activation service with automated instant delivery.' "
                 "WHERE description LIKE '%Supplier ID%' OR description LIKE '%Wholesale Cost%'"

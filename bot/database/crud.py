@@ -5,7 +5,7 @@ from sqlalchemy import select, update, delete, func
 from bot.database.session import async_session
 from bot.database.models import (
     User, Category, Product, ProductStock, CartItem, Order, PromoCode, PaymentReceipt, Review,
-    RestockSubscription, SupportTicket, BotSetting
+    RestockSubscription, SupportTicket, BotSetting, UsedPaymentLink
 )
 from bot.config import ADMIN_IDS, OWNER_ID, REFERRAL_PERCENT, BASE_CURRENCY
 
@@ -614,7 +614,73 @@ async def check_transaction_exists(transaction_id: str) -> bool:
     async with async_session() as session:
         stmt = select(PaymentReceipt.id).where(PaymentReceipt.transaction_id == transaction_id)
         res = await session.execute(stmt)
-        return res.scalar_one_or_none() is not None
+        if res.scalar_one_or_none() is not None:
+            return True
+        stmt_used = select(UsedPaymentLink.id).where(UsedPaymentLink.transaction_id == transaction_id)
+        res_used = await session.execute(stmt_used)
+        return res_used.scalar_one_or_none() is not None
+
+
+async def is_payment_link_or_txn_used(
+    normalized_url: Optional[str] = None,
+    transaction_id: Optional[str] = None
+) -> Tuple[bool, str]:
+    """
+    Checks if a payment receipt URL, normalized link, or transaction ID has already been recorded/used.
+    Returns (is_used, reason_amharic).
+    """
+    async with async_session() as session:
+        if transaction_id:
+            # 1. Check in UsedPaymentLink table
+            stmt_used_txn = select(UsedPaymentLink.id).where(UsedPaymentLink.transaction_id == transaction_id)
+            res_used_txn = await session.execute(stmt_used_txn)
+            if res_used_txn.scalar_one_or_none() is not None:
+                return True, "ይህ የክፍያ መለያ (Transaction ID) አስቀድሞ ጥቅም ላይ ውሏል።"
+
+            # 2. Check in PaymentReceipt table
+            stmt_rec_txn = select(PaymentReceipt.id).where(PaymentReceipt.transaction_id == transaction_id)
+            res_rec_txn = await session.execute(stmt_rec_txn)
+            if res_rec_txn.scalar_one_or_none() is not None:
+                return True, "ይህ የክፍያ መለያ (Transaction ID) አስቀድሞ ጥቅም ላይ ውሏል።"
+
+        if normalized_url:
+            # 3. Check in UsedPaymentLink table
+            stmt_used_url = select(UsedPaymentLink.id).where(UsedPaymentLink.normalized_url == normalized_url)
+            res_used_url = await session.execute(stmt_used_url)
+            if res_used_url.scalar_one_or_none() is not None:
+                return True, "ይህ ደረሰኝ ወይም የክፍያ ሊንክ አስቀድሞ ጥቅም ላይ ውሏል።"
+
+            # 4. Check in PaymentReceipt table
+            stmt_rec_url = select(PaymentReceipt.id).where(PaymentReceipt.receipt_url == normalized_url)
+            res_rec_url = await session.execute(stmt_rec_url)
+            if res_rec_url.scalar_one_or_none() is not None:
+                return True, "ይህ ደረሰኝ ወይም የክፍያ ሊንክ አስቀድሞ ጥቅም ላይ ውሏል።"
+
+        return False, ""
+
+
+async def record_used_payment_link(
+    user_id: int,
+    provider: str,
+    normalized_url: str,
+    original_url: str,
+    transaction_id: str,
+    amount: Decimal
+) -> UsedPaymentLink:
+    """Permanently records a consumed/verified payment link to prevent replay attacks."""
+    async with async_session() as session:
+        link_record = UsedPaymentLink(
+            user_id=user_id,
+            provider=provider,
+            normalized_url=normalized_url,
+            original_url=original_url,
+            transaction_id=transaction_id,
+            amount=amount
+        )
+        session.add(link_record)
+        await session.commit()
+        await session.refresh(link_record)
+        return link_record
 
 
 async def save_payment_receipt(
@@ -624,7 +690,8 @@ async def save_payment_receipt(
     amount: Decimal,
     sender_name: str = "",
     raw_details: str = "",
-    status: str = "approved"
+    status: str = "approved",
+    receipt_url: Optional[str] = None
 ) -> PaymentReceipt:
     async with async_session() as session:
         receipt = PaymentReceipt(
@@ -634,7 +701,8 @@ async def save_payment_receipt(
             amount=amount,
             sender_name=sender_name,
             raw_details=raw_details,
-            status=status
+            status=status,
+            receipt_url=receipt_url
         )
         session.add(receipt)
         await session.commit()

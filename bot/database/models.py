@@ -129,7 +129,21 @@ class PaymentReceipt(Base):
     currency = Column(String(10), default="ETB")
     sender_name = Column(String(128), nullable=True)
     status = Column(String(32), default="approved")  # "approved", "pending", "rejected"
+    receipt_url = Column(Text, nullable=True, index=True)
     raw_details = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class UsedPaymentLink(Base):
+    __tablename__ = "used_payment_links"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    normalized_url = Column(String(512), unique=True, nullable=False, index=True)
+    original_url = Column(Text, nullable=False)
+    transaction_id = Column(String(128), unique=True, nullable=False, index=True)
+    provider = Column(String(32), nullable=False)  # "telebirr", "cbe"
+    user_id = Column(BigInteger, ForeignKey("users.telegram_id"), nullable=False, index=True)
+    amount = Column(Numeric(12, 2), nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
