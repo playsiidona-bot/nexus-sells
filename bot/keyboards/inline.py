@@ -182,11 +182,78 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="[ + Category ]", callback_data="adm_add_cat", style="primary")],
         [InlineKeyboardButton(text="[ + Stock Keys ]", callback_data="adm_add_stock", style="primary"),
          InlineKeyboardButton(text="[ + Promo Code ]", callback_data="adm_add_promo", style="primary")],
-        [InlineKeyboardButton(text="[ Store Settings ]", callback_data="adm_settings"),                             # Default
-         InlineKeyboardButton(text="[ Broadcast ]", callback_data="adm_broadcast", style="danger")],                # Red
-        [InlineKeyboardButton(text="[ Sales Analytics ]", callback_data="adm_stats", style="success")],            # Green
-        [InlineKeyboardButton(text="< Close Admin", callback_data="close_view", style="danger")]                    # Red
+        [InlineKeyboardButton(text="[ 🔄 Review API Products ]", callback_data="adm_api_menu", style="primary"),
+         InlineKeyboardButton(text="[ Store Settings ]", callback_data="adm_settings")],
+        [InlineKeyboardButton(text="[ Broadcast ]", callback_data="adm_broadcast", style="danger"),
+         InlineKeyboardButton(text="[ Sales Analytics ]", callback_data="adm_stats", style="success")],
+        [InlineKeyboardButton(text="< Close Admin", callback_data="close_view", style="danger")]
     ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_api_menu_keyboard(pending_count: int = 0, approved_count: int = 0) -> InlineKeyboardMarkup:
+    """Supplier API Management & Review Center."""
+    pending_text = f"[ 📋 Pending Review ({pending_count}) ]"
+    pending_style = "danger" if pending_count > 0 else "primary"
+    buttons = [
+        [
+            InlineKeyboardButton(text="[ 📥 Sync from AIVerseHub ]", callback_data="adm_api_sync", style="success"),
+            InlineKeyboardButton(text="[ 💰 Check API Balance ]", callback_data="adm_api_bal", style="primary")
+        ],
+        [
+            InlineKeyboardButton(text=pending_text, callback_data="adm_api_pending", style=pending_style),
+            InlineKeyboardButton(text=f"[ 🛍️ Active in Store ({approved_count}) ]", callback_data="adm_api_active", style="primary")
+        ],
+        [InlineKeyboardButton(text="< Back to Admin", callback_data="adm_home", style="danger")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_pending_api_list_keyboard(products: List[Product], is_pending: bool = True) -> InlineKeyboardMarkup:
+    """List API items for inspection and review."""
+    buttons = []
+    for p in products[:15]:
+        status_tag = "REVIEW" if not p.is_active else "ACTIVE"
+        cost_str = f"${p.wholesale_price:.2f}" if p.wholesale_price else "$0.00"
+        price_str = f"${p.price:.2f}"
+        btn_text = f"[{status_tag}] {p.name[:20]} | Cost: {cost_str} -> {price_str}"
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"adm_api_inspect_{p.id}")])
+
+    buttons.append([InlineKeyboardButton(text="< Back to API Center", callback_data="adm_api_menu", style="danger")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_api_item_review_keyboard(product: Product) -> InlineKeyboardMarkup:
+    """Admin review & edit actions for a specific API product."""
+    toggle_text = "[ ❌ Hide / Deactivate ]" if product.is_active else "[ ✅ Approve & Publish to Store ]"
+    toggle_style = "danger" if product.is_active else "success"
+    buttons = [
+        [InlineKeyboardButton(text=toggle_text, callback_data=f"adm_api_toggle_{product.id}", style=toggle_style)],
+        [
+            InlineKeyboardButton(text="[ ✏️ Edit Retail Price ]", callback_data=f"adm_api_setprice_{product.id}", style="primary"),
+            InlineKeyboardButton(text="[ ✏️ Edit Title ]", callback_data=f"adm_api_setname_{product.id}", style="primary")
+        ],
+        [
+            InlineKeyboardButton(text="[ 🗂️ Change Category ]", callback_data=f"adm_api_setcat_{product.id}", style="primary"),
+            InlineKeyboardButton(text="[ 🗑️ Delete Product ]", callback_data=f"adm_api_del_{product.id}", style="danger")
+        ],
+        [InlineKeyboardButton(text="< Back to Pending List", callback_data="adm_api_pending", style="danger")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_categories_select_keyboard(categories: List[Category], product_id: int) -> InlineKeyboardMarkup:
+    """Category picker for API product approval."""
+    buttons = []
+    row = []
+    for cat in categories:
+        row.append(InlineKeyboardButton(text=f"[ {cat.name} ]", callback_data=f"adm_api_assigncat_{product_id}_{cat.id}", style="primary"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="< Cancel", callback_data=f"adm_api_inspect_{product_id}", style="danger")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

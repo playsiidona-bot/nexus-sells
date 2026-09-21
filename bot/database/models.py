@@ -47,6 +47,8 @@ class Product(Base):
     sale_price = Column(Numeric(12, 2), nullable=True)
     delivery_type = Column(String(32), default="stock")  # "stock" (local keys) or "api" (AIVerse Hub)
     service_id = Column(String(64), nullable=True)  # AIVerse Hub service ID if delivery_type == "api"
+    wholesale_price = Column(Numeric(12, 2), nullable=True, default=0.00)  # Supplier wholesale cost
+    api_stock = Column(Integer, default=0)  # Live stock reported by external API
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 

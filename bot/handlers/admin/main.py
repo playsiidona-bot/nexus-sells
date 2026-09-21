@@ -11,9 +11,16 @@ from bot.database.models import User, Product, Order, Category, ProductStock, Su
 from bot.database.crud import (
     create_category, add_product_stock_items, get_and_clear_restock_subscribers,
     get_ticket_by_code, replace_key_for_ticket, refund_ticket, reject_ticket,
-    get_product_by_id, get_setting, set_setting
+    get_product_by_id, get_setting, set_setting, sync_aiverse_products,
+    get_pending_api_products, get_approved_api_products, update_api_product_review,
+    delete_product, get_all_categories
 )
-from bot.keyboards.inline import admin_main_keyboard, admin_settings_keyboard
+from bot.keyboards.inline import (
+    admin_main_keyboard, admin_settings_keyboard, admin_api_menu_keyboard,
+    admin_pending_api_list_keyboard, admin_api_item_review_keyboard,
+    admin_categories_select_keyboard
+)
+from bot.services.aiverse_client import aiverse_client
 from bot.config import (
     ADMIN_IDS, OWNER_ID, BASE_CURRENCY, TELEBIRR_RECEIVER_PHONE,
     TELEBIRR_RECEIVER_NAME, CBE_ACCOUNT_NUMBER, CBE_ACCOUNT_NAME,
@@ -34,6 +41,8 @@ class AdminStates(StatesGroup):
     waiting_cbe = State()
     waiting_fjoin = State()
     waiting_revchan = State()
+    waiting_api_price = State()
+    waiting_api_name = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -461,4 +470,270 @@ async def process_revchan(message: Message, state: FSMContext):
     await set_setting("reviews_channel_id", text, "Customer reviews channel")
     await message.answer(f"✅ Review Channel ወደ <b>{text}</b> ተቀይሯል! አዳዲስ ሪቪውዎች እዚህ ቻናል ላይ ይለጠፋሉ።", parse_mode="HTML")
     await state.clear()
+
+
+@router.callback_query(F.data == "adm_home")
+async def back_to_admin_home(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    text = (
+        "<b>Nexus Hub Admin Suite</b>\n"
+        "────────────────────────\n"
+        "የቦቱን ዕቃዎች፣ ክምችት፣ API ምርቶችና አጠቃላይ ስታትስቲክስ ከዚህ ማስተዳደር ይችላሉ።"
+    )
+    await call.message.edit_text(text, reply_markup=admin_main_keyboard(), parse_mode="HTML")
+    await call.answer()
+
+
+# =====================================================================
+# API PRODUCT REVIEW, APPROVAL & PRICE ADJUSTMENT
+# =====================================================================
+
+@router.callback_query(F.data == "adm_api_menu")
+async def open_api_menu(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    pending = await get_pending_api_products(100)
+    approved = await get_approved_api_products(100)
+    kb = admin_api_menu_keyboard(len(pending), len(approved))
+    text = (
+        "<b>SUPPLIER API & PRODUCT REVIEW CENTER</b>\n"
+        "────────────────────────\n"
+        "All products from external APIs (AIVerseHub) are staged here.\n\n"
+        "<blockquote>• <b>Admin Review Policy:</b> Any product imported from the API remains hidden until you inspect, adjust pricing, and explicitly approve it.\n"
+        f"• <b>Pending Review:</b> <code>{len(pending)} items</code>\n"
+        f"• <b>Active in Store:</b> <code>{len(approved)} items</code></blockquote>\n\n"
+        "Select an action below:"
+    )
+    await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await call.answer()
+
+
+@router.callback_query(F.data == "adm_api_bal")
+async def check_api_balance(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    res = await aiverse_client.get_me()
+    if "error" in res:
+        await call.answer(f"API Error: {res['error']}", show_alert=True)
+        return
+    bal = res.get("wallet_balance", 0.0)
+    name = res.get("first_name", "AIVerse User")
+    await call.answer(f"AIVerse Account ({name}): Balance = ${bal:.2f}", show_alert=True)
+
+
+@router.callback_query(F.data == "adm_api_sync")
+async def sync_api_catalog(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    await call.answer("Fetching catalog from AIVerseHub API...", show_alert=False)
+    data = await aiverse_client.get_products()
+    services = data.get("services", [])
+    if not services:
+        err = data.get("error", "No services returned from supplier API")
+        await call.answer(f"Sync failed: {err}", show_alert=True)
+        return
+
+    res = await sync_aiverse_products(services)
+    pending = await get_pending_api_products(100)
+    approved = await get_approved_api_products(100)
+    kb = admin_api_menu_keyboard(len(pending), len(approved))
+    text = (
+        "<b>AIVERSEHUB CATALOG SYNC COMPLETE</b>\n"
+        "────────────────────────\n"
+        f"<blockquote>• <b>Total Services Fetched:</b> <code>{len(services)}</code>\n"
+        f"• <b>New Items Staged for Review:</b> <code>{res['created']}</code>\n"
+        f"• <b>Existing Items Updated:</b> <code>{res['updated']}</code></blockquote>\n\n"
+        "<i>All new services are staged as <b>Pending Review</b> (hidden from users) until you approve them.</i>"
+    )
+    await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "adm_api_pending")
+async def view_pending_api_products(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    pending = await get_pending_api_products(50)
+    if not pending:
+        await call.answer("No pending API products requiring review.", show_alert=True)
+        return
+
+    kb = admin_pending_api_list_keyboard(pending, is_pending=True)
+    text = (
+        "<b>PENDING API PRODUCTS (NEED REVIEW)</b>\n"
+        "────────────────────────\n"
+        "These items were fetched from the API and are <b>hidden from customers</b>.\n"
+        "Tap an item below to inspect, set custom retail pricing, assign category, and approve:"
+    )
+    await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await call.answer()
+
+
+@router.callback_query(F.data == "adm_api_active")
+async def view_active_api_products(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    active = await get_approved_api_products(50)
+    if not active:
+        await call.answer("No active API products in store.", show_alert=True)
+        return
+
+    kb = admin_pending_api_list_keyboard(active, is_pending=False)
+    text = (
+        "<b>ACTIVE STORE API PRODUCTS</b>\n"
+        "────────────────────────\n"
+        "These API items are currently live and purchasable by customers in the catalog.\n"
+        "Tap an item to modify price or deactivate:"
+    )
+    await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("adm_api_inspect_"))
+async def inspect_api_product(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    prod_id = int(call.data.split("_")[3])
+    product = await get_product_by_id(prod_id)
+    if not product:
+        await call.answer("Product not found", show_alert=True)
+        return
+
+    status_tag = "ACTIVE & PUBLISHED IN STORE" if product.is_active else "PENDING REVIEW (HIDDEN FROM USERS)"
+    cost = product.wholesale_price or Decimal("0.00")
+    margin = product.price - cost
+    margin_percent = ((margin / cost) * 100) if cost > 0 else 0
+
+    text = (
+        f"<b>API PRODUCT INSPECTION & REVIEW</b>\n"
+        f"────────────────────────\n"
+        f"<blockquote>• <b>Title:</b> {product.name}\n"
+        f"• <b>Supplier Service ID:</b> <code>{product.service_id}</code>\n"
+        f"• <b>Wholesale Cost:</b> <code>${cost:.2f}</code>\n"
+        f"• <b>Current Retail Price:</b> <code>${product.price:.2f}</code>\n"
+        f"• <b>Your Profit Margin:</b> <code>+${margin:.2f} (+{margin_percent:.1f}%)</code>\n"
+        f"• <b>Live API Stock:</b> <code>{product.api_stock}</code>\n"
+        f"• <b>Status:</b> <b>[{status_tag}]</b></blockquote>\n\n"
+        f"<i>Adjust pricing or details below before approving:</i>"
+    )
+    kb = admin_api_item_review_keyboard(product)
+    await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("adm_api_toggle_"))
+async def toggle_api_approval(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    prod_id = int(call.data.split("_")[3])
+    product = await get_product_by_id(prod_id)
+    if not product:
+        await call.answer("Product not found", show_alert=True)
+        return
+
+    new_active = not product.is_active
+    await update_api_product_review(prod_id, is_active=new_active)
+    msg = "Product approved and published to store catalog!" if new_active else "Product hidden and deactivated from store catalog."
+    await call.answer(msg, show_alert=True)
+
+    call.data = f"adm_api_inspect_{prod_id}"
+    await inspect_api_product(call)
+
+
+@router.callback_query(F.data.startswith("adm_api_setprice_"))
+async def prompt_set_api_price(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    prod_id = int(call.data.split("_")[3])
+    product = await get_product_by_id(prod_id)
+    if not product:
+        await call.answer("Product not found", show_alert=True)
+        return
+
+    await state.update_data(prod_id=prod_id)
+    await state.set_state(AdminStates.waiting_api_price)
+    cost = product.wholesale_price or Decimal("0.00")
+    await call.message.answer(
+        f"<b>SET CUSTOM RETAIL PRICE</b>\n"
+        f"────────────────────────\n"
+        f"• Product: <b>{product.name}</b>\n"
+        f"• Wholesale Cost: <code>${cost:.2f}</code>\n\n"
+        f"Send the new retail price in USD (e.g. <code>4.99</code> or <code>12.50</code>):",
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_api_price)
+async def process_set_api_price(message: Message, state: FSMContext):
+    data = await state.get_data()
+    prod_id = data.get("prod_id")
+    try:
+        new_price = Decimal(message.text.strip().replace("$", ""))
+        if new_price <= 0:
+            raise ValueError()
+    except Exception:
+        await message.answer("Please enter a valid numeric price (e.g. 9.99).")
+        return
+
+    await update_api_product_review(prod_id, price=new_price)
+    await state.clear()
+    await message.answer(f"✅ Retail price updated to <b>${new_price:.2f}</b>!", parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("adm_api_setname_"))
+async def prompt_set_api_name(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    prod_id = int(call.data.split("_")[3])
+    await state.update_data(prod_id=prod_id)
+    await state.set_state(AdminStates.waiting_api_name)
+    await call.message.answer("Send the customized display title for this product:", parse_mode="HTML")
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_api_name)
+async def process_set_api_name(message: Message, state: FSMContext):
+    data = await state.get_data()
+    prod_id = data.get("prod_id")
+    new_name = message.text.strip()
+    if new_name and prod_id:
+        await update_api_product_review(prod_id, name=new_name)
+        await message.answer(f"✅ Title updated to <b>{new_name}</b>!", parse_mode="HTML")
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("adm_api_setcat_"))
+async def prompt_set_api_cat(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    prod_id = int(call.data.split("_")[3])
+    categories = await get_all_categories()
+    kb = admin_categories_select_keyboard(categories, prod_id)
+    await call.message.edit_text("Select category to assign this product to:", reply_markup=kb)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("adm_api_assigncat_"))
+async def process_assign_api_cat(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    parts = call.data.split("_")
+    prod_id = int(parts[3])
+    cat_id = int(parts[4])
+    await update_api_product_review(prod_id, category_id=cat_id)
+    await call.answer("Category updated!", show_alert=True)
+    call.data = f"adm_api_inspect_{prod_id}"
+    await inspect_api_product(call)
+
+
+@router.callback_query(F.data.startswith("adm_api_del_"))
+async def process_delete_api_prod(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    prod_id = int(call.data.split("_")[3])
+    await delete_product(prod_id)
+    await call.answer("Product deleted from staging.", show_alert=True)
+    await view_pending_api_products(call)
+
 

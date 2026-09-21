@@ -161,6 +161,131 @@ async def add_product_stock_items(product_id: int, items: List[str], is_infinity
 
 
 # =====================================================================
+# API PRODUCTS & ADMIN REVIEW STAGING
+# =====================================================================
+
+async def sync_aiverse_products(services: List[Dict[str, Any]], default_markup: Decimal = Decimal("1.25")) -> Dict[str, int]:
+    """
+    Sync products from AIVerse Hub into the database.
+    CRITICAL: Any new products imported from the API are set with is_active = False
+    so that the Admin must review, adjust price/details, and approve before users can see them.
+    """
+    async with async_session() as session:
+        # Ensure a default category exists for imported API services
+        cat_stmt = select(Category).where(Category.name.in_(["API Services", "Digital Subscriptions", "ዲጂታል አገልግሎቶች"]))
+        default_cat = (await session.execute(cat_stmt)).scalars().first()
+        if not default_cat:
+            default_cat = Category(name="Digital Subscriptions", icon="🌐", display_order=99)
+            session.add(default_cat)
+            await session.commit()
+            await session.refresh(default_cat)
+
+        created_count = 0
+        updated_count = 0
+
+        for s in services:
+            sid = str(s.get("service_id", "")).strip()
+            if not sid:
+                continue
+
+            name = str(s.get("name", f"Service {sid}")).strip()
+            cost = Decimal(str(s.get("price", "0.00")))
+            stock = int(s.get("stock", 0))
+
+            prod_stmt = select(Product).where(
+                Product.delivery_type == "api",
+                Product.service_id == sid
+            )
+            existing = (await session.execute(prod_stmt)).scalar_one_or_none()
+
+            if existing:
+                # Update wholesale cost and live stock, but PRESERVE admin's custom price, name and is_active approval state
+                existing.wholesale_price = cost
+                existing.api_stock = stock
+                updated_count += 1
+            else:
+                # NEW item from API: created as INACTIVE (Pending Admin Review)
+                suggested_retail = (cost * default_markup).quantize(Decimal("0.01"))
+                new_prod = Product(
+                    category_id=default_cat.id,
+                    name=name,
+                    description=f"Supplier ID: {sid}\nWholesale Cost: ${cost:.2f}\nLive API Stock: {stock}",
+                    price=suggested_retail,
+                    wholesale_price=cost,
+                    api_stock=stock,
+                    delivery_type="api",
+                    service_id=sid,
+                    is_active=False  # MUST be reviewed & approved by admin first!
+                )
+                session.add(new_prod)
+                created_count += 1
+
+        await session.commit()
+        return {"created": created_count, "updated": updated_count}
+
+
+async def get_pending_api_products(limit: int = 50) -> List[Product]:
+    """Fetch API products that require admin review and approval."""
+    async with async_session() as session:
+        stmt = select(Product).where(
+            Product.delivery_type == "api",
+            Product.is_active == False
+        ).order_by(Product.id.desc()).limit(limit)
+        res = await session.execute(stmt)
+        return list(res.scalars().all())
+
+
+async def get_approved_api_products(limit: int = 50) -> List[Product]:
+    """Fetch API products that have been approved and published."""
+    async with async_session() as session:
+        stmt = select(Product).where(
+            Product.delivery_type == "api",
+            Product.is_active == True
+        ).order_by(Product.id.desc()).limit(limit)
+        res = await session.execute(stmt)
+        return list(res.scalars().all())
+
+
+async def update_api_product_review(
+    product_id: int,
+    price: Optional[Decimal] = None,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    category_id: Optional[int] = None,
+    is_active: Optional[bool] = None
+) -> Optional[Product]:
+    """Admin adjustments: change retail price, name, category, or approve/hide."""
+    async with async_session() as session:
+        stmt = select(Product).where(Product.id == product_id).with_for_update()
+        product = (await session.execute(stmt)).scalar_one_or_none()
+        if not product:
+            return None
+
+        if price is not None:
+            product.price = price
+        if name is not None:
+            product.name = name
+        if description is not None:
+            product.description = description
+        if category_id is not None:
+            product.category_id = category_id
+        if is_active is not None:
+            product.is_active = is_active
+
+        await session.commit()
+        await session.refresh(product)
+        return product
+
+
+async def delete_product(product_id: int) -> bool:
+    async with async_session() as session:
+        stmt = delete(Product).where(Product.id == product_id)
+        await session.execute(stmt)
+        await session.commit()
+        return True
+
+
+# =====================================================================
 # CART OPERATIONS
 # =====================================================================
 
@@ -307,7 +432,22 @@ async def checkout_cart_atomic(
                         keys.append(s.value)
                     delivered_payload = "\n".join([f"🔑 <code>{k}</code>" for k in keys])
             else:
-                delivered_payload = f"⚡ Service ID: {product.service_id} (API Fulfilled)"
+                from bot.services.aiverse_client import aiverse_client
+                api_res = await aiverse_client.create_order(
+                    service_id=str(product.service_id),
+                    quantity=ci.quantity
+                )
+                if not api_res.get("success", False):
+                    err_msg = api_res.get("error", "Supplier order failed")
+                    await session.rollback()
+                    return False, f"Supplier Delivery Error: {err_msg}", []
+
+                prods_delivered = api_res.get("products", [])
+                if prods_delivered:
+                    codes_str = "\n".join([f"<code>{p}</code>" for p in prods_delivered])
+                    delivered_payload = f"Supplier Order: <code>{api_res.get('order_id', 'N/A')}</code>\nDelivered Credentials:\n{codes_str}"
+                else:
+                    delivered_payload = f"Supplier Order: <code>{api_res.get('order_id', 'N/A')}</code> (Instant Delivery Processed)"
 
             item_price = (Decimal(str(product.sale_price or product.price)) * ci.quantity).quantize(Decimal("0.01"))
 
