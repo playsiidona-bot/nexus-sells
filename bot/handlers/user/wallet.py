@@ -1138,3 +1138,127 @@ async def process_usdt_txid(message: Message, state: FSMContext):
             await message.bot.send_message(ch, admin_alert, reply_markup=admin_kb, parse_mode="HTML")
         except Exception as e:
             logger.error(f"Failed to send USDT deposit alert to channel {ch}: {e}")
+
+
+# =====================================================================
+# VERIFY PAYMENT WITHOUT HASH (MANUAL CHECK)
+# =====================================================================
+
+@router.callback_query(F.data.startswith("usdt_nohash_"))
+async def prompt_usdt_nohash_verification(call: CallbackQuery):
+    network = call.data.replace("usdt_nohash_", "")
+    user = await get_user_by_id(call.from_user.id)
+    lang = user.language if user else "en"
+
+    address = await get_setting(f"usdt_{network}_address", "Configured Address")
+
+    text = (
+        f"<b>VERIFY USDT TRANSFER ({network.upper()}) WITHOUT HASH</b>\n"
+        "────────────────────────\n"
+        f"If you transferred USDT on <b>{network.upper()}</b> to:\n"
+        f"<code>{address}</code>\n"
+        "but do not have or cannot copy the transaction hash, you can submit a manual verification request.\n\n"
+        "Our team will check our wallet for incoming transfers and credit your balance.\n\n"
+        "Tap <b>Confirm Verification Request</b> to notify administrators:"
+        if lang == "en" else
+        f"<b>የUSDT ዝውውር ({network.upper()}) ያለ HASH ማረጋገጫ</b>\n"
+        "────────────────────────\n"
+        f"በ <b>{network.upper()}</b> ወደዚህ አድራሻ፡\n\n"
+        f"<code>{address}</code>\n\n"
+        "ገንዘብ ልከው የትራንዛክሽን hash ማግኘት ካልቻሉ፣ ያለ hash የማረጋገጫ ጥያቄ ማቅረብ ይችላሉ።\n\n"
+        "አስተዳዳሪዎቻችን የዋሌት ገቢዎችን በመፈተሽ ሒሳብዎን ይጨምራሉ።\n\n"
+        "<b>ማረጋገጫውን ላክ</b> የሚለውን ቁልፍ ይጫኑ፡"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="Confirm Verification Request" if lang == "en" else "ማረጋገጫውን ላክ",
+            callback_data=f"usdt_confirm_nohash_{network}",
+            style="success"
+        )],
+        [InlineKeyboardButton(
+            text="< Back" if lang == "en" else "< ተመለስ",
+            callback_data=f"dep_usdt_{network}",
+            style="danger"
+        )]
+    ])
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("usdt_confirm_nohash_"))
+async def process_usdt_nohash_confirm(call: CallbackQuery):
+    network = call.data.replace("usdt_confirm_nohash_", "")
+    user_id = call.from_user.id
+    user = await get_user_by_id(user_id)
+    lang = user.language if user else "en"
+
+    import time
+    fake_txid = f"nohash_{user_id}_{int(time.time())}"
+    receipt = await save_payment_receipt(
+        user_id=user_id,
+        provider=f"usdt_{network}_manual",
+        transaction_id=fake_txid,
+        amount=Decimal("0.00"),
+        sender_name=f"USDT Manual ({network.upper()})",
+        raw_details=f"User @{call.from_user.username or 'N/A'} requested manual check on {network.upper()}",
+        status="pending"
+    )
+
+    receipt_id = receipt.id if hasattr(receipt, "id") else 0
+    ref_text = "Refresh Balance" if lang == "en" else "ሒሳብ አድስ"
+    back_text = "< Back to Deposit" if lang == "en" else "< ወደ ክፍያ ተመለስ"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=ref_text, callback_data="refresh_wallet", style="primary"),
+            InlineKeyboardButton(text=back_text, callback_data="back_to_deposit", style="danger")
+        ]
+    ])
+
+    user_text = (
+        f"<b>VERIFICATION REQUEST SUBMITTED</b>\n"
+        "────────────────────────\n"
+        f"• Reference: <code>#{receipt_id}</code>\n"
+        f"• Network: <b>{network.upper()}</b>\n"
+        f"• Method: <b>Manual Blockchain Inspection</b>\n\n"
+        "Your request has been delivered to store administrators. We will check our wallet for incoming transfers and credit your balance shortly."
+        if lang == "en" else
+        f"<b>የማረጋገጫ ጥያቄ ቀርቧል</b>\n"
+        "────────────────────────\n"
+        f"• መለያ ቁጥር፡ <code>#{receipt_id}</code>\n"
+        f"• ኔትወርክ፡ <b>{network.upper()}</b>\n"
+        f"• አይነት፡ <b>ቀጥታ የዋሌት ማረጋገጫ</b>\n\n"
+        "ጥያቄዎ ለአስተዳዳሪዎች ደርሷል። ገቢ የተደረገው ገንዘብ በዋሌታችን እንደተረጋገጠ ሒሳብዎ ወዲያውኑ ይሞላል።"
+    )
+    try:
+        await call.message.edit_text(user_text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer("Request sent to admin", show_alert=False)
+
+    # Admin Channel notification with Approve / Reject buttons
+    targets = get_channel_list(PAYMENTS_CHANNEL_ID or LOGS_CHANNEL_ID)
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Approve Deposit", callback_data=f"adm_usdt_appr_{receipt_id}", style="success"),
+            InlineKeyboardButton(text="Reject Deposit", callback_data=f"adm_usdt_rej_{receipt_id}", style="danger")
+        ]
+    ])
+    admin_alert = (
+        "<b>MANUAL USDT DEPOSIT REQUEST (NO TXID)</b>\n"
+        "────────────────────────\n"
+        f"Receipt ID: <code>#{receipt_id}</code>\n"
+        f"User: <code>{user_id}</code> (@{call.from_user.username or 'N/A'})\n"
+        f"Network: <b>{network.upper()}</b>\n"
+        "Notice: <i>Customer transferred without TXID hash. Please check your incoming transfers on blockchain explorer for this customer.</i>\n\n"
+        "Tap 'Approve Deposit' to enter amount and credit balance, or 'Reject Deposit' to decline."
+    )
+    for ch in targets:
+        try:
+            await call.bot.send_message(ch, admin_alert, reply_markup=admin_kb, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Failed to send manual USDT deposit alert to channel {ch}: {e}")

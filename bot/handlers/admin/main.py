@@ -16,7 +16,9 @@ from bot.database.crud import (
     get_pending_api_products, get_approved_api_products, update_api_product_review,
     delete_product, get_all_categories, create_product, get_category_by_id,
     update_category, delete_category, get_all_products, update_product_details,
-    get_payment_receipt_by_id, update_payment_receipt, add_user_balance
+    get_payment_receipt_by_id, update_payment_receipt, add_user_balance,
+    get_users_paged, set_user_ban_status, adjust_user_balance, get_user_stats,
+    get_user_by_id, get_user_orders
 )
 from bot.keyboards.inline import (
     admin_main_keyboard, admin_settings_keyboard, admin_api_menu_keyboard,
@@ -26,7 +28,7 @@ from bot.keyboards.inline import (
     admin_add_prod_delivery_keyboard, admin_add_prod_input_keyboard,
     admin_category_manager_keyboard, admin_category_detail_keyboard,
     admin_product_manager_keyboard, admin_product_detail_keyboard,
-    admin_usdt_wallets_keyboard
+    admin_usdt_wallets_keyboard, admin_users_list_keyboard, admin_user_detail_keyboard
 )
 from bot.services.aiverse_client import aiverse_client
 from bot.config import (
@@ -71,6 +73,9 @@ class AdminStates(StatesGroup):
     waiting_usdt_polygon_addr = State()
     waiting_usdt_bep20_addr = State()
     waiting_appr_deposit_amount = State()
+    # User controlling states
+    waiting_user_search = State()
+    waiting_user_adjbal = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -1774,5 +1779,327 @@ async def admin_usdt_reject(call: CallbackQuery):
         await call.bot.send_message(receipt.user_id, user_notify, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Failed to notify user {receipt.user_id} of deposit rejection: {e}")
+
+
+# =====================================================================
+# USER CONTROLLING & PAGINATION
+# =====================================================================
+
+USERS_PER_PAGE = 8
+
+
+@router.callback_query(F.data == "adm_users_mgr")
+@router.callback_query(F.data.startswith("adm_usrpage_"))
+async def admin_users_page(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+
+    page = 1
+    if call.data.startswith("adm_usrpage_"):
+        try:
+            page = max(1, int(call.data.replace("adm_usrpage_", "")))
+        except ValueError:
+            page = 1
+
+    users, total_count = await get_users_paged(page=page, per_page=USERS_PER_PAGE)
+    total_pages = max(1, (total_count + USERS_PER_PAGE - 1) // USERS_PER_PAGE)
+
+    text = (
+        "<b>USER MANAGEMENT & CONTROL</b>\n"
+        "────────────────────────\n"
+        f"• Total Registered Users: <b>{total_count}</b>\n"
+        f"• Viewing Page: <b>{page} of {total_pages}</b>\n\n"
+        "Select a user below to view full profile, adjust balance, ban/unban, or inspect orders:"
+    )
+    kb = admin_users_list_keyboard(users, page, total_pages)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data == "adm_usr_noop")
+async def admin_users_noop(call: CallbackQuery):
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("adm_usr_") & ~F.data.in_(["adm_usr_search", "adm_usr_noop"]))
+async def admin_user_profile(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+
+    parts = call.data.split("_")
+    if len(parts) < 4:
+        return
+    user_id = int(parts[2])
+    page = int(parts[3])
+
+    target_user = await get_user_by_id(user_id)
+    if not target_user:
+        await call.answer("User not found", show_alert=True)
+        return
+
+    stats = await get_user_stats(user_id)
+    status_str = "BANNED" if target_user.is_banned else "ACTIVE"
+    username_str = f"@{target_user.username}" if target_user.username else "None"
+    joined_date = target_user.created_at.strftime("%Y-%m-%d %H:%M") if getattr(target_user, "created_at", None) else "N/A"
+
+    text = (
+        f"<b>USER PROFILE: {target_user.first_name}</b>\n"
+        "────────────────────────\n"
+        f"• Telegram ID: <code>{target_user.telegram_id}</code>\n"
+        f"• Username: {username_str}\n"
+        f"• Account Status: <b>{status_str}</b>\n"
+        f"• Current Balance: <b>{CURRENCY_SYMBOL}{target_user.balance:.2f} {BASE_CURRENCY}</b>\n"
+        f"• Total Orders: <b>{stats['order_count']}</b>\n"
+        f"• Total Spent: <b>{CURRENCY_SYMBOL}{stats['total_spent']:.2f}</b>\n"
+        f"• Referrals Count: <b>{stats['referral_count']}</b>\n"
+        f"• Registered: <code>{joined_date}</code>\n\n"
+        "Select an action below:"
+    )
+    kb = admin_user_detail_keyboard(target_user, page=page)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("adm_usradj_"))
+async def admin_user_adjbal_prompt(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+
+    parts = call.data.split("_")
+    user_id = int(parts[2])
+    page = int(parts[3])
+
+    target_user = await get_user_by_id(user_id)
+    if not target_user:
+        await call.answer("User not found", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.waiting_user_adjbal)
+    await state.update_data(target_user_id=user_id, page=page)
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Cancel", callback_data=f"adm_usr_{user_id}_{page}", style="danger")]
+    ])
+    prompt = (
+        f"<b>ADJUST BALANCE: {target_user.first_name}</b>\n"
+        "────────────────────────\n"
+        f"User ID: <code>{user_id}</code>\n"
+        f"Current Balance: <b>{CURRENCY_SYMBOL}{target_user.balance:.2f}</b>\n\n"
+        "Reply with the amount to add or deduct:\n"
+        "• To add funds: <code>+10</code> or <code>10</code>\n"
+        "• To deduct funds: <code>-5</code>\n"
+        "<i>(or tap Cancel to abort)</i>"
+    )
+    await call.message.edit_text(prompt, reply_markup=cancel_kb, parse_mode="HTML")
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_user_adjbal)
+async def admin_user_adjbal_process(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+
+    raw_val = (message.text or "").strip().replace("$", "")
+    if raw_val.lower() == "/cancel":
+        await state.clear()
+        await message.answer("Adjustment cancelled.")
+        return
+
+    try:
+        delta = Decimal(raw_val)
+    except Exception:
+        await message.answer("Please send a valid numeric amount (e.g. <code>+10.00</code> or <code>-5.00</code>):")
+        return
+
+    data = await state.get_data()
+    target_user_id = data.get("target_user_id")
+    page = data.get("page", 1)
+    await state.clear()
+
+    ok, new_bal = await adjust_user_balance(target_user_id, delta)
+    if not ok:
+        await message.answer("Failed to adjust user balance. User may not exist.")
+        return
+
+    sign = "+" if delta >= 0 else ""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Back to Profile", callback_data=f"adm_usr_{target_user_id}_{page}", style="primary")],
+        [InlineKeyboardButton(text="< Back to Users", callback_data=f"adm_usrpage_{page}", style="primary")]
+    ])
+    await message.answer(
+        f"<b>BALANCE ADJUSTED</b>\n────────────────────────\nUser: <code>{target_user_id}</code>\nAdjustment: <b>{sign}{CURRENCY_SYMBOL}{delta:.2f}</b>\nNew Balance: <b>{CURRENCY_SYMBOL}{new_bal:.2f}</b>",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+
+    if delta > 0:
+        try:
+            user_notify = (
+                f"<b>ACCOUNT BALANCE CREDITED</b>\n"
+                "────────────────────────\n"
+                f"An administrator has added <b>+{CURRENCY_SYMBOL}{delta:.2f} {BASE_CURRENCY}</b> to your balance!\n"
+                f"New Balance: <b>{CURRENCY_SYMBOL}{new_bal:.2f} {BASE_CURRENCY}</b>"
+            )
+            await message.bot.send_message(target_user_id, user_notify, parse_mode="HTML")
+        except Exception:
+            pass
+
+
+@router.callback_query(F.data.startswith("adm_usrban_"))
+async def admin_user_toggle_ban(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+
+    parts = call.data.split("_")
+    user_id = int(parts[2])
+    page = int(parts[3])
+
+    target_user = await get_user_by_id(user_id)
+    if not target_user:
+        await call.answer("User not found", show_alert=True)
+        return
+
+    new_ban = not target_user.is_banned
+    updated = await set_user_ban_status(user_id, is_banned=new_ban)
+
+    action_str = "banned" if new_ban else "unbanned"
+    await call.answer(f"User {action_str} successfully", show_alert=True)
+
+    stats = await get_user_stats(user_id)
+    status_str = "BANNED" if updated.is_banned else "ACTIVE"
+    username_str = f"@{updated.username}" if updated.username else "None"
+    joined_date = updated.created_at.strftime("%Y-%m-%d %H:%M") if getattr(updated, "created_at", None) else "N/A"
+
+    text = (
+        f"<b>USER PROFILE: {updated.first_name}</b>\n"
+        "────────────────────────\n"
+        f"• Telegram ID: <code>{updated.telegram_id}</code>\n"
+        f"• Username: {username_str}\n"
+        f"• Account Status: <b>{status_str}</b>\n"
+        f"• Current Balance: <b>{CURRENCY_SYMBOL}{updated.balance:.2f} {BASE_CURRENCY}</b>\n"
+        f"• Total Orders: <b>{stats['order_count']}</b>\n"
+        f"• Total Spent: <b>{CURRENCY_SYMBOL}{stats['total_spent']:.2f}</b>\n"
+        f"• Referrals Count: <b>{stats['referral_count']}</b>\n"
+        f"• Registered: <code>{joined_date}</code>\n\n"
+        "Select an action below:"
+    )
+    kb = admin_user_detail_keyboard(updated, page=page)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("adm_usrord_"))
+async def admin_user_orders_view(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+
+    parts = call.data.split("_")
+    user_id = int(parts[2])
+    page = int(parts[3])
+
+    orders = await get_user_orders(user_id, limit=10)
+    if not orders:
+        await call.answer("No orders found for this user.", show_alert=True)
+        return
+
+    lines = []
+    for o in orders:
+        date_str = o.created_at.strftime("%b %d") if getattr(o, "created_at", None) else "N/A"
+        lines.append(
+            f"• <code>{o.order_code}</code> — <b>{o.product_name}</b> (x{o.quantity})\n"
+            f"  Price: {CURRENCY_SYMBOL}{o.total_price:.2f} | Date: {date_str} | Status: {o.status}"
+        )
+
+    text = (
+        f"<b>RECENT ORDERS FOR USER {user_id}</b>\n"
+        "────────────────────────\n"
+        + "\n\n".join(lines)
+    )
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Back to Profile", callback_data=f"adm_usr_{user_id}_{page}", style="primary")]
+    ])
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data == "adm_usr_search")
+async def admin_user_search_prompt(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+
+    await state.set_state(AdminStates.waiting_user_search)
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Cancel", callback_data="adm_users_mgr", style="danger")]
+    ])
+    await call.message.edit_text(
+        "<b>SEARCH USER</b>\n────────────────────────\nSend Telegram ID or @username to search:\n<i>(or tap Cancel to abort)</i>",
+        reply_markup=cancel_kb,
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_user_search)
+async def admin_user_search_process(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+
+    query = (message.text or "").strip()
+    if query.lower() == "/cancel":
+        await state.clear()
+        await message.answer("Search cancelled.")
+        return
+
+    await state.clear()
+    users, total = await get_users_paged(page=1, per_page=10, search=query)
+
+    if not users:
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="< Back to Users", callback_data="adm_users_mgr", style="primary")]
+        ])
+        await message.answer(f"No users found matching <code>{query}</code>.", reply_markup=kb, parse_mode="HTML")
+        return
+
+    if len(users) == 1:
+        u = users[0]
+        stats = await get_user_stats(u.telegram_id)
+        status_str = "BANNED" if u.is_banned else "ACTIVE"
+        username_str = f"@{u.username}" if u.username else "None"
+        joined_date = u.created_at.strftime("%Y-%m-%d %H:%M") if getattr(u, "created_at", None) else "N/A"
+
+        text = (
+            f"<b>USER FOUND: {u.first_name}</b>\n"
+            "────────────────────────\n"
+            f"• Telegram ID: <code>{u.telegram_id}</code>\n"
+            f"• Username: {username_str}\n"
+            f"• Account Status: <b>{status_str}</b>\n"
+            f"• Current Balance: <b>{CURRENCY_SYMBOL}{u.balance:.2f} {BASE_CURRENCY}</b>\n"
+            f"• Total Orders: <b>{stats['order_count']}</b>\n"
+            f"• Total Spent: <b>{CURRENCY_SYMBOL}{stats['total_spent']:.2f}</b>\n"
+            f"• Registered: <code>{joined_date}</code>"
+        )
+        kb = admin_user_detail_keyboard(u, page=1)
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
+        return
+
+    text = f"Found <b>{total}</b> users matching <code>{query}</code>:"
+    kb = admin_users_list_keyboard(users, page=1, total_pages=1)
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 

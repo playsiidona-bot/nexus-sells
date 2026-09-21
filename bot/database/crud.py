@@ -867,3 +867,78 @@ async def get_all_settings() -> Dict[str, str]:
         return res
 
 
+# =====================================================================
+# USER MANAGEMENT & CONTROLLING
+# =====================================================================
+
+async def get_users_paged(page: int = 1, per_page: int = 10, search: Optional[str] = None) -> Tuple[List[User], int]:
+    """Retrieve paginated users with optional search."""
+    async with async_session() as session:
+        base_query = select(User)
+        count_query = select(func.count(User.telegram_id))
+
+        if search:
+            search_str = search.strip()
+            if search_str.isdigit():
+                cond = (User.telegram_id == int(search_str)) | (User.username.ilike(f"%{search_str}%"))
+            else:
+                clean = search_str.lstrip("@")
+                cond = User.username.ilike(f"%{clean}%") | User.first_name.ilike(f"%{clean}%")
+            base_query = base_query.where(cond)
+            count_query = count_query.where(cond)
+
+        total = (await session.execute(count_query)).scalar() or 0
+        offset = max(0, (page - 1) * per_page)
+        stmt = base_query.order_by(User.created_at.desc()).offset(offset).limit(per_page)
+        res = await session.execute(stmt)
+        return list(res.scalars().all()), total
+
+
+async def set_user_ban_status(user_id: int, is_banned: bool) -> Optional[User]:
+    """Toggle or set user ban status."""
+    async with async_session() as session:
+        stmt = select(User).where(User.telegram_id == user_id)
+        user = (await session.execute(stmt)).scalar_one_or_none()
+        if not user:
+            return None
+        user.is_banned = is_banned
+        await session.commit()
+        await session.refresh(user)
+        return user
+
+
+async def adjust_user_balance(user_id: int, delta: Decimal) -> Tuple[bool, Decimal]:
+    """Add or deduct user balance atomically."""
+    async with async_session() as session:
+        stmt = select(User).where(User.telegram_id == user_id)
+        user = (await session.execute(stmt)).scalar_one_or_none()
+        if not user:
+            return False, Decimal("0.00")
+        current = Decimal(str(user.balance or 0.00))
+        new_bal = current + delta
+        if new_bal < Decimal("0.00"):
+            new_bal = Decimal("0.00")
+        user.balance = new_bal
+        await session.commit()
+        return True, new_bal
+
+
+async def get_user_stats(user_id: int) -> Dict[str, Any]:
+    """Retrieve user order count, total expenditure, and referral count."""
+    async with async_session() as session:
+        order_count = (await session.execute(
+            select(func.count(Order.id)).where(Order.user_id == user_id)
+        )).scalar() or 0
+        total_spent = (await session.execute(
+            select(func.sum(Order.total_price)).where(Order.user_id == user_id)
+        )).scalar() or Decimal("0.00")
+        referral_count = (await session.execute(
+            select(func.count(User.telegram_id)).where(User.referrer_id == user_id)
+        )).scalar() or 0
+        return {
+            "order_count": order_count,
+            "total_spent": total_spent,
+            "referral_count": referral_count
+        }
+
+

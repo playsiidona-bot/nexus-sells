@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery
 from bot.database.crud import (
     get_cart, update_cart_qty, clear_cart, checkout_cart_atomic, get_user_by_id
 )
-from bot.keyboards.inline import cart_keyboard
+from bot.keyboards.inline import cart_keyboard, insufficient_balance_keyboard, deposit_methods_keyboard
 from bot.services.i18n import t
 from bot.config import BASE_CURRENCY, CURRENCY_SYMBOL, ORDERS_CHANNEL_ID, LOGS_CHANNEL_ID, get_channel_list
 
@@ -222,7 +222,8 @@ async def execute_checkout(event_message: Message, bot, user, items: list, custo
         if msg == "insufficient_balance":
             total = sum(x["total_price"] for x in items)
             err_text = t("insufficient_balance", lang, price=f"{CURRENCY_SYMBOL}{total:.2f}", balance=f"{CURRENCY_SYMBOL}{user.balance:.2f}", currency="")
-            await event_message.answer(err_text, parse_mode="HTML")
+            kb = insufficient_balance_keyboard(lang)
+            await event_message.answer(err_text, reply_markup=kb, parse_mode="HTML")
         else:
             await event_message.answer(f"Notice: {msg}", parse_mode="HTML")
         return
@@ -263,3 +264,74 @@ async def execute_checkout(event_message: Message, bot, user, items: list, custo
                 await bot.send_message(ch, log_msg, parse_mode="HTML")
             except Exception:
                 pass
+
+
+@router.callback_query(F.data == "dep_from_cart")
+async def handle_dep_from_cart(call: CallbackQuery):
+    user = await get_user_by_id(call.from_user.id)
+    lang = user.language if user else "en"
+    balance = user.balance if user else Decimal("0.00")
+    text = t("wallet_title", lang, balance=balance, currency=BASE_CURRENCY, user_id=call.from_user.id)
+    kb = deposit_methods_keyboard(lang=lang)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data == "cart_retry_checkout")
+async def handle_retry_checkout(call: CallbackQuery, state: FSMContext):
+    user = await get_user_by_id(call.from_user.id)
+    lang = user.language if user else "en"
+    items = await get_cart(call.from_user.id)
+
+    if not items:
+        await call.answer("Cart is empty", show_alert=True)
+        text, kb = await render_cart_view(call.from_user.id)
+        try:
+            await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            pass
+        return
+
+    total = sum(x["total_price"] for x in items)
+    user_bal = user.balance if user else Decimal("0.00")
+
+    if user_bal < total:
+        err_text = t("insufficient_balance", lang, price=f"{CURRENCY_SYMBOL}{total:.2f}", balance=f"{CURRENCY_SYMBOL}{user_bal:.2f}", currency="")
+        kb = insufficient_balance_keyboard(lang)
+        try:
+            await call.message.edit_text(err_text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            pass
+        await call.answer(
+            f"Balance checked: {CURRENCY_SYMBOL}{user_bal:.2f} — still needed {CURRENCY_SYMBOL}{(total - user_bal):.2f}",
+            show_alert=True
+        )
+        return
+
+    data = await state.get_data()
+    customer_inputs = data.get("customer_inputs", {})
+    items_needing_input = [it for it in items if it.get("requires_input")]
+    pending_item = next((it for it in items_needing_input if it["product_id"] not in customer_inputs), None)
+
+    if pending_item:
+        await state.set_state(CheckoutStates.waiting_customer_input)
+        await state.update_data(pending_prod_id=pending_item["product_id"])
+        placeholder = pending_item.get("input_placeholder") or "@username"
+        prompt = (
+            "<b>REQUIRED CUSTOMER INFORMATION</b>\n"
+            "────────────────────────\n"
+            f"Product: <b>{pending_item['name']}</b>\n\n"
+            f"Please enter your <b>{placeholder}</b>:"
+        )
+        cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="< Cancel Checkout", callback_data="cart_cancel_checkout", style="danger")]
+        ])
+        await call.message.edit_text(prompt, reply_markup=cancel_kb, parse_mode="HTML")
+        await call.answer()
+        return
+
+    await execute_checkout(call.message, call.bot, user, items, customer_inputs, state)
+    await call.answer("Purchase completed!", show_alert=False)

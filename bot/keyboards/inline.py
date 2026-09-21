@@ -1,7 +1,7 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from bot.services.i18n import t
-from bot.database.models import Category, Product
+from bot.database.models import Category, Product, User
 from bot.config import BASE_CURRENCY, CURRENCY_SYMBOL
 
 
@@ -163,16 +163,34 @@ def deposit_methods_keyboard(lang: str = "en", show_local: bool = True) -> Inlin
 
 
 def usdt_deposit_keyboard(network: str, lang: str = "en") -> InlineKeyboardMarkup:
-    """Direct USDT address payment screen with TXID submission."""
+    """Direct USDT address payment screen with TXID submission and no-hash manual verification."""
     submit_text = "Submit Transaction Hash (TXID)" if lang == "en" else "የትራንዛክሽን Hash ላክ (TXID)"
+    nohash_text = "I Paid (Verify Without Hash)" if lang == "en" else "ከፍያለሁ (ያለ Hash አረጋግጥ)"
     ref_text = "Refresh Balance" if lang == "en" else "ሒሳብ አድስ"
     back_text = "< Back to Deposit Methods" if lang == "en" else "< ወደ ክፍያ አማራጮች"
 
     buttons = [
         [InlineKeyboardButton(text=submit_text, callback_data=f"usdt_submit_{network}", style="success")],  # Green
+        [InlineKeyboardButton(text=nohash_text, callback_data=f"usdt_nohash_{network}", style="primary")],  # Blue
         [
             InlineKeyboardButton(text=ref_text, callback_data="refresh_wallet", style="primary"),          # Blue
             InlineKeyboardButton(text=back_text, callback_data="back_to_deposit", style="danger")          # Red
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def insufficient_balance_keyboard(lang: str = "en") -> InlineKeyboardMarkup:
+    """Updatable retry and top-up controls when order is rejected due to balance."""
+    topup_text = "Deposit / Add Balance" if lang == "en" else "ሒሳብ ሙላ (Deposit)"
+    retry_text = "Check Balance & Retry" if lang == "en" else "ሒሳብ አረጋግጥና እንደገና ይሞክሩ"
+    back_text = "< Back to Cart" if lang == "en" else "< ወደ ዘንቢል ተመለስ"
+
+    buttons = [
+        [InlineKeyboardButton(text=topup_text, callback_data="dep_from_cart", style="success")],
+        [
+            InlineKeyboardButton(text=retry_text, callback_data="cart_retry_checkout", style="primary"),
+            InlineKeyboardButton(text=back_text, callback_data="refresh_cart", style="danger")
         ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -226,8 +244,8 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="Manage Categories", callback_data="adm_cats_mgr", style="success")
         ],
         [
-            InlineKeyboardButton(text="+ Stock Keys", callback_data="adm_add_stock", style="primary"),
-            InlineKeyboardButton(text="+ Promo Code", callback_data="adm_add_promo", style="primary")
+            InlineKeyboardButton(text="Manage Users", callback_data="adm_users_mgr", style="primary"),
+            InlineKeyboardButton(text="+ Stock Keys", callback_data="adm_add_stock", style="primary")
         ],
         [
             InlineKeyboardButton(text="Review API Products", callback_data="adm_api_menu", style="primary"),
@@ -419,4 +437,119 @@ def admin_add_prod_input_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="Yes, Requires Custom Input (@username, ID)", callback_data="adm_addprod_input_yes", style="success")],
         [InlineKeyboardButton(text="< Cancel", callback_data="adm_home", style="danger")]
     ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_users_list_keyboard(users: List[User], page: int, total_pages: int) -> InlineKeyboardMarkup:
+    """Paginated user management list."""
+    buttons = []
+    for u in users:
+        ban_status = "Banned" if u.is_banned else "Active"
+        ban_style = "danger" if u.is_banned else "primary"
+        user_name = f"@{u.username}" if u.username else (u.first_name or f"User {u.telegram_id}")
+        btn_text = f"{user_name[:14]} | {CURRENCY_SYMBOL}{u.balance:.2f} ({ban_status})"
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"adm_usr_{u.telegram_id}_{page}", style=ban_style)])
+
+    # Pagination navigation row
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton(text="< Prev", callback_data=f"adm_usrpage_{page-1}", style="primary"))
+    nav_row.append(InlineKeyboardButton(text=f"Page {page}/{max(1, total_pages)}", callback_data="adm_usr_noop"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton(text="Next >", callback_data=f"adm_usrpage_{page+1}", style="primary"))
+    buttons.append(nav_row)
+
+    buttons.append([
+        InlineKeyboardButton(text="Find User by ID", callback_data="adm_usr_search", style="primary"),
+        InlineKeyboardButton(text="< Back to Admin", callback_data="adm_home", style="danger")
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_user_detail_keyboard(user: User, page: int = 1) -> InlineKeyboardMarkup:
+    """User profile control panel: adjust balance, ban/unban, view orders."""
+    ban_text = "Unban User" if user.is_banned else "Ban User"
+    ban_style = "success" if user.is_banned else "danger"
+
+    buttons = [
+        [
+            InlineKeyboardButton(text="Add / Deduct Balance", callback_data=f"adm_usradj_{user.telegram_id}_{page}", style="success"),
+            InlineKeyboardButton(text=ban_text, callback_data=f"adm_usrban_{user.telegram_id}_{page}", style=ban_style)
+        ],
+        [
+            InlineKeyboardButton(text="View User Orders", callback_data=f"adm_usrord_{user.telegram_id}_{page}", style="primary"),
+            InlineKeyboardButton(text="< Back to Users", callback_data=f"adm_usrpage_{page}", style="danger")
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_api_menu_keyboard(pending_count: int = 0, approved_count: int = 0) -> InlineKeyboardMarkup:
+    """Supplier API Management & Review Center."""
+    pending_text = f"Pending Review ({pending_count})"
+    pending_style = "danger" if pending_count > 0 else "primary"
+    buttons = [
+        [
+            InlineKeyboardButton(text="Sync from AIVerseHub", callback_data="adm_api_sync", style="success"),
+            InlineKeyboardButton(text="Check API Balance", callback_data="adm_api_bal", style="primary")
+        ],
+        [
+            InlineKeyboardButton(text=pending_text, callback_data="adm_api_pending", style=pending_style),
+            InlineKeyboardButton(text=f"Active in Store ({approved_count})", callback_data="adm_api_active", style="primary")
+        ],
+        [InlineKeyboardButton(text="< Back to Admin", callback_data="adm_home", style="danger")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_pending_api_list_keyboard(products: List[Product], is_pending: bool = True) -> InlineKeyboardMarkup:
+    """List API items for inspection and review."""
+    buttons = []
+    for p in products[:15]:
+        status_tag = "Review" if not p.is_active else "Active"
+        cost_str = f"${p.wholesale_price:.2f}" if p.wholesale_price else "$0.00"
+        price_str = f"${p.price:.2f}"
+        btn_text = f"{status_tag}: {p.name[:20]} | Cost: {cost_str} -> {price_str}"
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"adm_api_inspect_{p.id}", style="primary")])
+
+    buttons.append([InlineKeyboardButton(text="< Back to API Center", callback_data="adm_api_menu", style="danger")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_api_item_review_keyboard(product: Product) -> InlineKeyboardMarkup:
+    """Admin review & edit actions for a specific API product."""
+    toggle_text = "Hide / Deactivate" if product.is_active else "Approve & Publish to Store"
+    toggle_style = "danger" if product.is_active else "success"
+    input_tag = f"Input Req: YES ({product.input_placeholder or '@username'})" if product.requires_input else "Input Req: NO"
+    input_style = "success" if product.requires_input else "primary"
+    buttons = [
+        [InlineKeyboardButton(text=toggle_text, callback_data=f"adm_api_toggle_{product.id}", style=toggle_style)],
+        [
+            InlineKeyboardButton(text="Edit Retail Price", callback_data=f"adm_api_setprice_{product.id}", style="primary"),
+            InlineKeyboardButton(text="Edit Title", callback_data=f"adm_api_setname_{product.id}", style="primary")
+        ],
+        [
+            InlineKeyboardButton(text=input_tag, callback_data=f"adm_api_toggleinput_{product.id}", style=input_style),
+            InlineKeyboardButton(text="Change Category", callback_data=f"adm_api_setcat_{product.id}", style="primary")
+        ],
+        [
+            InlineKeyboardButton(text="Delete Product", callback_data=f"adm_api_del_{product.id}", style="danger"),
+            InlineKeyboardButton(text="< Back to Pending", callback_data="adm_api_pending", style="danger")
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_categories_select_keyboard(categories: List[Category], product_id: int) -> InlineKeyboardMarkup:
+    """Category picker for API product approval."""
+    buttons = []
+    row = []
+    for cat in categories:
+        row.append(InlineKeyboardButton(text=cat.name, callback_data=f"adm_api_assigncat_{product_id}_{cat.id}", style="primary"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="< Cancel", callback_data=f"adm_api_inspect_{product_id}", style="danger")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
