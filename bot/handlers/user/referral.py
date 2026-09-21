@@ -7,7 +7,7 @@ from bot.config import REFERRAL_PERCENT
 router = Router()
 
 
-@router.message(F.text.in_(["👥 የግብዣ ሊንክ (Referral)", "👥 Referral Link"]))
+@router.message(F.text.in_(["[ Affiliate Program ]", "Affiliate Program", "[ የግብዣ ፕሮግራም ]", "👥 Referral Link", "👥 የግብዣ ሊንክ (Referral)"]))
 async def show_referral(message: Message):
     user = await get_user_by_id(message.from_user.id)
     lang = user.language if user else "en"

@@ -9,7 +9,7 @@ from bot.database.crud import (
 from bot.keyboards.inline import order_action_keyboard, admin_ticket_keyboard, rating_stars_keyboard
 from bot.config import (
     ADMIN_IDS, OWNER_ID, LOGS_CHANNEL_ID, ORDERS_CHANNEL_ID,
-    REVIEWS_CHANNEL_ID, get_channel_list
+    REVIEWS_CHANNEL_ID, CURRENCY_SYMBOL, get_channel_list
 )
 
 router = Router()
@@ -23,26 +23,42 @@ class ReviewStates(StatesGroup):
     waiting_review_comment = State()
 
 
-@router.message(F.text.in_(["📦 የገዟቸው ዕቃዎች", "📦 My Orders"]))
+@router.message(F.text.in_(["[ Order History ]", "Order History", "[ የገዟቸው ዕቃዎች ]", "📦 My Orders", "📦 የገዟቸው ዕቃዎች"]))
 async def view_orders(message: Message):
     user = await get_user_by_id(message.from_user.id)
     lang = user.language if user else "en"
 
     orders = await get_user_orders(message.from_user.id, limit=5)
     if not orders:
-        text = "እስካሁን የገዙት ዕቃ የለም።" if lang == "am" else "You have no purchase history yet."
-        await message.answer(text)
+        text = (
+            "<b>ORDER HISTORY</b>\n"
+            "────────────────────────\n"
+            "You have no purchase history yet."
+            if lang == "en" else
+            "<b>የግዢ ታሪክ</b>\n"
+            "────────────────────────\n"
+            "እስካሁን የገዙት ዕቃ የለም።"
+        )
+        await message.answer(text, parse_mode="HTML")
         return
 
-    title = "📦 <b>የቅርብ ጊዜ ትዕዛዞችዎ (Recent Orders):</b>" if lang == "am" else "📦 <b>Your Recent Orders:</b>"
+    title = (
+        "<b>RECENT ORDERS</b>\n"
+        "────────────────────────\n"
+        "Your recent transactions and delivered keys:"
+        if lang == "en" else
+        "<b>የቅርብ ጊዜ ትዕዛዞችዎ</b>\n"
+        "────────────────────────\n"
+        "የገዟቸው ዕቃዎችና የቁልፍ መረጃዎች፡"
+    )
     await message.answer(title, parse_mode="HTML")
 
     for o in orders:
         order_text = (
-            f"📦 <b>{o.product_name}</b> (x{o.quantity})\n"
-            f"🆔 Order Code: <code>{o.order_code}</code>\n"
-            f"💵 Price: <b>{o.total_price} {o.currency}</b>\n"
-            f"{o.delivered_data or ''}"
+            f"<b>{o.product_name}</b> (x{o.quantity})\n"
+            f"• Order Code: <code>{o.order_code}</code>\n"
+            f"• Total Paid: <code>{CURRENCY_SYMBOL}{o.total_price:.2f}</code>\n"
+            f"• Delivered Key / Data:\n<code>{o.delivered_data or 'Fulfilled'}</code>"
         )
         kb = order_action_keyboard(o.id, lang)
         await message.answer(order_text, reply_markup=kb, parse_mode="HTML")
@@ -63,11 +79,15 @@ async def start_report_issue(call: CallbackQuery, state: FSMContext):
     await state.set_state(ReportIssueStates.waiting_issue_text)
 
     prompt = (
-        f"⚠️ <b>ስለ ትዕዛዝ #{order.order_code} ({order.product_name}) ያለብዎትን ችግር ይግለጹ፡</b>\n\n"
-        "<i>ለምሳሌ፡ ቁልፉ አልሰራም፣ አካውንቱ ሎግ-ኢን አላለኝም፣ ወዘተ...</i>"
-        if lang == "am" else
-        f"⚠️ <b>Describe your issue for order #{order.order_code} ({order.product_name}):</b>\n\n"
-        "<i>e.g. The license key is invalid, account is locked, etc...</i>"
+        f"<b>REPORT ISSUE: #{order.order_code} ({order.product_name})</b>\n"
+        f"────────────────────────\n"
+        f"Please describe the problem you encountered in detail:\n"
+        f"<i>(e.g. key invalid, account locked, activation error)</i>"
+        if lang == "en" else
+        f"<b>ስለ ትዕዛዝ #{order.order_code} ({order.product_name}) ቅሬታ ማቅረቢያ</b>\n"
+        f"────────────────────────\n"
+        f"ያጋጠመዎትን ችግር በዝርዝር ይጻፉ፡\n"
+        f"<i>(ለምሳሌ፡ ቁልፉ አልሰራም፣ አካውንቱ አልከፈተም ወዘተ)</i>"
     )
     await call.message.answer(prompt, parse_mode="HTML")
     await call.answer()
@@ -85,10 +105,9 @@ async def submit_issue_report(message: Message, state: FSMContext):
     issue_desc = (message.text or "").strip()
 
     if not issue_desc or not order_id:
-        await message.answer("⚠️ እባክዎ ችግሩን በዝርዝር ይጻፉ።")
+        await message.answer("Please provide detailed description of the issue.")
         return
 
-    # Create ticket
     ticket = await create_support_ticket(
         user_id=user_id,
         order_id=order_id,
@@ -97,27 +116,29 @@ async def submit_issue_report(message: Message, state: FSMContext):
     )
 
     user_ack = (
-        f"✅ <b>ቅሬታዎ ተመዝግቧል!</b>\n\n"
-        f"🎫 የቲኬት ቁጥር (Ticket Code)፡ <code>{ticket.ticket_code}</code>\n"
-        f"📦 ዕቃ፡ <b>{product_name}</b>\n\n"
-        "የድጋፍ ሰጪ ቡድናችን ጉዳዩን ተመልክቶ ወዲያውኑ አዲስ ቁልፍ ይልክልዎታል ወይም ክፍያዎን ወደ ዋሌትዎ ይመልሳል!"
-        if lang == "am" else
-        f"✅ <b>Your issue has been reported!</b>\n\n"
-        f"🎫 Ticket Code: <code>{ticket.ticket_code}</code>\n"
-        f"📦 Product: <b>{product_name}</b>\n\n"
-        "Our support team will review it shortly to issue a replacement key or refund your balance."
+        f"<b>TICKET SUBMITTED SUCCESSFULLY</b>\n"
+        f"────────────────────────\n"
+        f"• Ticket Code: <code>{ticket.ticket_code}</code>\n"
+        f"• Product: <b>{product_name}</b>\n\n"
+        f"Support desk has received your ticket. A replacement key or refund will be processed promptly."
+        if lang == "en" else
+        f"<b>ቅሬታዎ በተሳካ ሁኔታ ተመዝግቧል</b>\n"
+        f"────────────────────────\n"
+        f"• የቲኬት ቁጥር፡ <code>{ticket.ticket_code}</code>\n"
+        f"• ዕቃ፡ <b>{product_name}</b>\n\n"
+        f"የድጋፍ ሰጪ ቡድናችን ጉዳዩን ተመልክቶ አዲስ ቁልፍ ወይም ተመላሽ ሒሳብ ይሰጥዎታል!"
     )
     await message.answer(user_ack, parse_mode="HTML")
     await state.clear()
 
-    # Send Admin Action Alert
     admin_alert = (
-        f"🚨 <b>NEW SUPPORT TICKET / ISSUE REPORT</b>\n\n"
-        f"🎫 Ticket: <code>{ticket.ticket_code}</code>\n"
-        f"👤 User: <code>{user_id}</code> (@{message.from_user.username or 'N/A'})\n"
-        f"📦 Product: <b>{product_name}</b> (Order ID: #{order_id})\n"
-        f"📝 Problem: <i>{issue_desc}</i>\n\n"
-        f"👇 Action:"
+        f"<b>SUPPORT TICKET: ISSUE REPORTED</b>\n"
+        f"────────────────────────\n"
+        f"• Ticket: <code>{ticket.ticket_code}</code>\n"
+        f"• User: <code>{user_id}</code> (@{message.from_user.username or 'N/A'})\n"
+        f"• Product: <b>{product_name}</b> (Order ID: #{order_id})\n"
+        f"• Problem:\n<blockquote>{issue_desc}</blockquote>\n"
+        f"Select resolution action below:"
     )
     admin_kb = admin_ticket_keyboard(ticket.ticket_code)
 
@@ -135,10 +156,6 @@ async def submit_issue_report(message: Message, state: FSMContext):
             pass
 
 
-# =====================================================================
-# CUSTOMER REVIEW & RATING (POSTS TO REVIEW CHANNEL)
-# =====================================================================
-
 @router.callback_query(F.data.startswith("rate_order_"))
 async def start_rate_order(call: CallbackQuery):
     user = await get_user_by_id(call.from_user.id)
@@ -151,13 +168,15 @@ async def start_rate_order(call: CallbackQuery):
         return
 
     text = (
-        f"⭐ <b>ለዕቃው ደረጃ ይስጡ (Rate {order.product_name}):</b>\n\n"
-        "ከ 1 እስከ 5 ኮከብ ይምረጡ፡"
-        if lang == "am" else
-        f"⭐ <b>Rate your order for {order.product_name}:</b>\n\n"
-        "Select your rating from 1 to 5 stars:"
+        f"<b>RATE YOUR PURCHASE: {order.product_name}</b>\n"
+        f"────────────────────────\n"
+        f"Select your rating score:"
+        if lang == "en" else
+        f"<b>ለዕቃው ደረጃ ይስጡ፡ {order.product_name}</b>\n"
+        f"────────────────────────\n"
+        f"ደረጃዎን ከታች ይምረጡ፡"
     )
-    await call.message.answer(text, reply_markup=rating_stars_keyboard(order_id), parse_mode="HTML")
+    await call.message.edit_text(text, reply_markup=rating_stars_keyboard(order_id), parse_mode="HTML")
     await call.answer()
 
 
@@ -183,11 +202,13 @@ async def select_rating_stars(call: CallbackQuery, state: FSMContext):
     await state.set_state(ReviewStates.waiting_review_comment)
 
     prompt = (
-        f"🌟 <b>{stars} ኮከብ መርጠዋል!</b>\n\n"
-        "ስለ አግልግሎቱ ያለዎትን አስተያየት እዚህ ይጻፉ (ወይም ያለ አስተያየት ለማጠናቀቅ <b>'skip'</b> ይበሉ)፡"
-        if lang == "am" else
-        f"🌟 <b>You selected {stars} stars!</b>\n\n"
-        "Please type your review comment (or send <b>'skip'</b> to finish):"
+        f"<b>Rating Selected: [{stars}/5]</b>\n"
+        f"────────────────────────\n"
+        f"Please type your review comment (or send <b>'skip'</b> to complete):"
+        if lang == "en" else
+        f"<b>የመረጡት ደረጃ፡ [{stars}/5]</b>\n"
+        f"────────────────────────\n"
+        f"አስተያየትዎን ይጻፉ (ወይም ያለ አስተያየት ለማጠናቀቅ <b>'skip'</b> ይበሉ)፡"
     )
     await call.message.edit_text(prompt, parse_mode="HTML")
     await call.answer()
@@ -206,35 +227,39 @@ async def process_review_comment(message: Message, state: FSMContext):
 
     comment_text = (message.text or "").strip()
     if comment_text.lower() in ("skip", "ዝለል", "-"):
-        comment_text = "Verified Customer Purchase ✅"
+        comment_text = "Verified Customer Purchase"
 
-    # Save to database
-    # (using order_id as product_id placeholder or order lookup)
     order = await get_order_by_id(order_id)
     if order:
         await add_review(user_id, order.id, stars, comment_text)
 
-    ack = "🙏 <b>እናመሰግናለን! አስተያየትዎ በተሳካ ሁኔታ ተመዝግቧል።</b>" if lang == "am" else "🙏 <b>Thank you! Your review has been published.</b>"
+    ack = (
+        "<b>THANK YOU!</b>\n"
+        "────────────────────────\n"
+        "Your review has been verified and published."
+        if lang == "en" else
+        "<b>እናመሰግናለን!</b>\n"
+        "────────────────────────\n"
+        "አስተያየትዎ በተሳካ ሁኔታ ተመዝግቧል።"
+    )
     await message.answer(ack, parse_mode="HTML")
     await state.clear()
 
-    # BROADCAST TO REVIEW CHANNEL(S)!
     rev_channel_raw = await get_setting("reviews_channel_id", REVIEWS_CHANNEL_ID)
     rev_targets = get_channel_list(rev_channel_raw)
     if rev_targets:
         first_name = message.from_user.first_name or "Customer"
-        star_emojis = "⭐" * stars
         review_card = (
-            f"🌟 <b>NEW VERIFIED CUSTOMER REVIEW</b> 🌟\n\n"
-            f"📦 <b>Product:</b> {product_name}\n"
-            f"⭐ <b>Rating:</b> {star_emojis} ({stars}/5)\n"
-            f"💬 <b>Feedback:</b> <i>\"{comment_text}\"</i>\n\n"
-            f"👤 <b>Customer:</b> {first_name} (ID: <code>****{str(user_id)[-4:]}</code>)\n"
-            f"✅ <i>Verified Purchase via Nexus Hub Bot</i>"
+            f"<b>VERIFIED CUSTOMER REVIEW</b>\n"
+            f"────────────────────────\n"
+            f"• Product: <b>{product_name}</b>\n"
+            f"• Rating: <b>[{stars}/5]</b>\n"
+            f"• Feedback: <i>\"{comment_text}\"</i>\n"
+            f"• Customer: {first_name} (ID: <code>****{str(user_id)[-4:]}</code>)\n"
+            f"• Status: Verified Purchase"
         )
         for target in rev_targets:
             try:
                 await message.bot.send_message(target, review_card, parse_mode="HTML")
             except Exception:
                 pass
-

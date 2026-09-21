@@ -109,6 +109,13 @@ async def get_products_by_category(category_id: int) -> List[Product]:
         return list(res.scalars().all())
 
 
+async def get_all_products(limit: int = 50) -> List[Product]:
+    async with async_session() as session:
+        stmt = select(Product).where(Product.is_active == True).order_by(Product.id).limit(limit)
+        res = await session.execute(stmt)
+        return list(res.scalars().all())
+
+
 async def get_product_by_id(product_id: int) -> Optional[Product]:
     async with async_session() as session:
         stmt = select(Product).where(Product.id == product_id)

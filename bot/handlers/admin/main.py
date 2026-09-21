@@ -40,7 +40,7 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS or user_id == OWNER_ID
 
 
-@router.message(F.text.in_(["⚙️ አስተዳዳሪ (Admin)", "⚙️ Admin Suite"]))
+@router.message(F.text.in_(["[ Admin Suite ]", "Admin Suite", "[ የአስተዳዳሪ ክፍል ]", "⚙️ አስተዳዳሪ (Admin)", "⚙️ Admin Suite"]))
 @router.message(Command("admin"))
 async def open_admin_panel(message: Message):
     if not is_admin(message.from_user.id):
