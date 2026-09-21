@@ -70,13 +70,13 @@ class ForceJoinMiddleware(BaseMiddleware):
                             pass
 
                     if link:
-                        unjoined_buttons.append([InlineKeyboardButton(text="[ Join Required Channel ]", url=link, style="primary")])
+                        unjoined_buttons.append([InlineKeyboardButton(text="Join Required Channel", url=link, style="primary")])
             except Exception as e:
                 # If bot cannot check membership (not admin or invalid ID), gracefully bypass
                 logger.warning(f"Force join bypass for channel {ch}: {e}")
 
         if unjoined_buttons:
-            unjoined_buttons.append([InlineKeyboardButton(text="[ Verify Membership / አረጋግጥ ]", callback_data="check_join", style="success")])
+            unjoined_buttons.append([InlineKeyboardButton(text="Verify Membership / አረጋግጥ", callback_data="check_join", style="success")])
             msg_text = (
                 "<b>CHANNEL SUBSCRIPTION REQUIRED</b>\n"
                 "────────────────────────\n"

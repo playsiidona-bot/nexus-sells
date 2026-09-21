@@ -41,7 +41,7 @@ class DepositStates(StatesGroup):
     waiting_receipt = State()
 
 
-@router.message(F.text.in_(["💳 ዋሌት / ሒሳብ", "💳 Wallet / Balance", "💳 Balance / Top-Up"]))
+@router.message(F.text.in_(["Balance & Deposit", "ዋሌት / ሒሳብ", "[ Balance & Deposit ]", "[ ዋሌት / ሒሳብ ]", "💳 ዋሌት / ሒሳብ", "💳 Wallet / Balance", "💳 Balance / Top-Up"]))
 async def view_wallet(message: Message):
     user = await get_user_by_id(message.from_user.id)
     lang = user.language if user else "en"

@@ -32,7 +32,7 @@ async def render_cart_view(user_id: int) -> tuple[str, Any]:
     return text, kb
 
 
-@router.message(F.text.in_(["[ Shopping Cart ]", "Shopping Cart", "[ የግዢ ዘንቢል ]", "🛒 My Cart", "🛒 የእኔ ዘንቢል (Cart)"]))
+@router.message(F.text.in_(["Shopping Cart", "የግዢ ዘንቢል", "[ Shopping Cart ]", "[ የግዢ ዘንቢል ]", "🛒 My Cart", "🛒 የእኔ ዘንቢል (Cart)"]))
 async def view_cart_message(message: Message):
     text, kb = await render_cart_view(message.from_user.id)
     await message.answer(text, reply_markup=kb, parse_mode="HTML")

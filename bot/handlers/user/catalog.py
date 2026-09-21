@@ -12,7 +12,7 @@ from bot.config import BASE_CURRENCY, CURRENCY_SYMBOL
 router = Router()
 
 
-@router.message(F.text.in_(["[ Products Catalog ]", "Products Catalog", "[ የዕቃዎች ካታሎግ ]", "🛍️ Products Catalog", "🛍️ የዕቃዎች ካታሎግ"]))
+@router.message(F.text.in_(["Products Catalog", "የዕቃዎች ካታሎግ", "[ Products Catalog ]", "[ የዕቃዎች ካታሎግ ]", "🛍️ Products Catalog", "🛍️ የዕቃዎች ካታሎግ"]))
 async def open_catalog(message: Message):
     user = await get_user_by_id(message.from_user.id)
     lang = user.language if user else "en"
@@ -172,7 +172,7 @@ async def handle_product_reviews(call: CallbackQuery):
     else:
         rev_lines = []
         for r in reviews:
-            score_bar = f"[{r.rating}/5]"
+            score_bar = f"{r.rating}/5"
             rev_lines.append(f"• <b>{score_bar}</b> <i>\"{r.comment or 'Verified Purchase'}\"</i>")
         rev_body = "\n".join(rev_lines)
         text = (

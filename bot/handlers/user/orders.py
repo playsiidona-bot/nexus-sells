@@ -23,7 +23,7 @@ class ReviewStates(StatesGroup):
     waiting_review_comment = State()
 
 
-@router.message(F.text.in_(["[ Order History ]", "Order History", "[ የገዟቸው ዕቃዎች ]", "📦 My Orders", "📦 የገዟቸው ዕቃዎች"]))
+@router.message(F.text.in_(["Order History", "የገዟቸው ዕቃዎች", "[ Order History ]", "[ የገዟቸው ዕቃዎች ]", "📦 My Orders", "📦 የገዟቸው ዕቃዎች"]))
 async def view_orders(message: Message):
     user = await get_user_by_id(message.from_user.id)
     lang = user.language if user else "en"
@@ -202,11 +202,11 @@ async def select_rating_stars(call: CallbackQuery, state: FSMContext):
     await state.set_state(ReviewStates.waiting_review_comment)
 
     prompt = (
-        f"<b>Rating Selected: [{stars}/5]</b>\n"
+        f"<b>Rating Selected: {stars}/5</b>\n"
         f"────────────────────────\n"
         f"Please type your review comment (or send <b>'skip'</b> to complete):"
         if lang == "en" else
-        f"<b>የመረጡት ደረጃ፡ [{stars}/5]</b>\n"
+        f"<b>የመረጡት ደረጃ፡ {stars}/5</b>\n"
         f"────────────────────────\n"
         f"አስተያየትዎን ይጻፉ (ወይም ያለ አስተያየት ለማጠናቀቅ <b>'skip'</b> ይበሉ)፡"
     )
@@ -253,7 +253,7 @@ async def process_review_comment(message: Message, state: FSMContext):
             f"<b>VERIFIED CUSTOMER REVIEW</b>\n"
             f"────────────────────────\n"
             f"• Product: <b>{product_name}</b>\n"
-            f"• Rating: <b>[{stars}/5]</b>\n"
+            f"• Rating: <b>{stars}/5</b>\n"
             f"• Feedback: <i>\"{comment_text}\"</i>\n"
             f"• Customer: {first_name} (ID: <code>****{str(user_id)[-4:]}</code>)\n"
             f"• Status: Verified Purchase"

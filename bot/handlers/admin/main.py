@@ -49,7 +49,7 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS or user_id == OWNER_ID
 
 
-@router.message(F.text.in_(["[ Admin Suite ]", "Admin Suite", "[ የአስተዳዳሪ ክፍል ]", "⚙️ አስተዳዳሪ (Admin)", "⚙️ Admin Suite"]))
+@router.message(F.text.in_(["Admin Suite", "የአስተዳዳሪ ክፍል", "[ Admin Suite ]", "[ የአስተዳዳሪ ክፍል ]", "⚙️ አስተዳዳሪ (Admin)", "⚙️ Admin Suite"]))
 @router.message(Command("admin"))
 async def open_admin_panel(message: Message):
     if not is_admin(message.from_user.id):
@@ -613,7 +613,7 @@ async def inspect_api_product(call: CallbackQuery):
         f"• <b>Current Retail Price:</b> <code>${product.price:.2f}</code>\n"
         f"• <b>Your Profit Margin:</b> <code>+${margin:.2f} (+{margin_percent:.1f}%)</code>\n"
         f"• <b>Live API Stock:</b> <code>{product.api_stock}</code>\n"
-        f"• <b>Status:</b> <b>[{status_tag}]</b></blockquote>\n\n"
+        f"• <b>Status:</b> <b>{status_tag}</b></blockquote>\n\n"
         f"<i>Adjust pricing or details below before approving:</i>"
     )
     kb = admin_api_item_review_keyboard(product)

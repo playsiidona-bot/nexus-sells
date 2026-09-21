@@ -43,7 +43,7 @@ async def cmd_start(message: Message):
     await message.answer(welcome_text, reply_markup=reply_kb, parse_mode="HTML")
 
 
-@router.message(F.text.in_(["[ Language ]", "Language", "🌐 Language", "🌐 ቋንቋ / Language", "Language / ቋንቋ"]))
+@router.message(F.text.in_(["Language", "ቋንቋ / Language", "[ Language ]", "🌐 Language", "🌐 ቋንቋ / Language", "Language / ቋንቋ"]))
 async def select_language(message: Message):
     await message.answer("Choose your display language / ቋንቋ ይምረጡ:", reply_markup=get_language_menu())
 
@@ -72,7 +72,7 @@ async def back_to_main(message: Message):
     await message.answer(t("welcome", lang), reply_markup=get_main_menu(lang, is_admin), parse_mode="HTML")
 
 
-@router.message(F.text.in_(["[ Customer Support ]", "[ Support ]", "Support", "💬 Customer Support", "💬 24/7 Support"]))
+@router.message(F.text.in_(["Customer Support", "የደንበኞች አገልግሎት", "[ Customer Support ]", "[ Support ]", "Support", "💬 Customer Support", "💬 24/7 Support"]))
 async def support_info(message: Message):
     user = await get_user_by_id(message.from_user.id)
     lang = user.language if user else "en"
