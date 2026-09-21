@@ -81,10 +81,10 @@ class AIVerseClient:
                 logger.error(f"AIVerse get_products error: {e}")
                 return {"error": str(e), "services": []}
 
-    async def create_order(self, service_id: str, quantity: int = 1) -> Dict[str, Any]:
+    async def create_order(self, service_id: str, quantity: int = 1, customer_input: Optional[str] = None) -> Dict[str, Any]:
         """
         Place an order with automated wallet debit and instant key/account delivery.
-        POST /api/v1/order -> {"service_id": str, "quantity": int}
+        POST /api/v1/order -> {"service_id": str, "quantity": int, ...}
         Response: {"success": bool, "order_id": str, "products": ["key1", ...], "total_cost": float}
         """
         await self.refresh_keys()
@@ -96,6 +96,12 @@ class AIVerseClient:
             "service_id": str(service_id),
             "quantity": int(quantity)
         }
+        if customer_input:
+            payload["input"] = str(customer_input).strip()
+            payload["target"] = str(customer_input).strip()
+            payload["link"] = str(customer_input).strip()
+            payload["username"] = str(customer_input).strip()
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 resp = await client.post(url, json=payload, headers=self._headers())

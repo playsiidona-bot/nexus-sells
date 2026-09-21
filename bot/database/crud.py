@@ -529,6 +529,10 @@ async def checkout_cart_atomic(
             order_code = f"NX-{uuid.uuid4().hex[:8].upper()}"
             delivered_payload = ""
 
+            c_input = None
+            if customer_inputs:
+                c_input = customer_inputs.get(product.id) or customer_inputs.get(str(product.id))
+
             if product.delivery_type == "stock":
                 # Check infinity
                 inf_stock = (await session.execute(
@@ -563,7 +567,8 @@ async def checkout_cart_atomic(
                 from bot.services.aiverse_client import aiverse_client
                 api_res = await aiverse_client.create_order(
                     service_id=str(product.service_id),
-                    quantity=ci.quantity
+                    quantity=ci.quantity,
+                    customer_input=c_input
                 )
                 if not api_res.get("success", False):
                     err_msg = api_res.get("error", "Delivery failed. Please contact support.")
@@ -578,7 +583,6 @@ async def checkout_cart_atomic(
                     delivered_payload = f"Order Ref: <code>{api_res.get('order_id', 'N/A')}</code>\nStatus: Activated Successfully"
 
             item_price = (Decimal(str(product.sale_price or product.price)) * ci.quantity).quantize(Decimal("0.01"))
-            c_input = (customer_inputs or {}).get(product.id)
 
             new_order = Order(
                 order_code=order_code,
