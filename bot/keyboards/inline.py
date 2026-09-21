@@ -111,7 +111,12 @@ def cart_keyboard(cart_items: List[Dict[str, Any]], lang: str = "am") -> InlineK
 def deposit_methods_keyboard(lang: str = "en", show_local: bool = True) -> InlineKeyboardMarkup:
     buttons = [
         [
-            InlineKeyboardButton(text="💎 CryptoBot (USDT, TON, BTC)", callback_data="dep_crypto")
+            InlineKeyboardButton(text="⚡ OxaPay (0.4% Fee / Instant)", callback_data="dep_oxapay"),
+            InlineKeyboardButton(text="🪙 Cryptomus (USDT & Crypto)", callback_data="dep_cryptomus")
+        ],
+        [
+            InlineKeyboardButton(text="🌍 NOWPayments (300+ Coins)", callback_data="dep_nowpayments"),
+            InlineKeyboardButton(text="💎 @CryptoBot (In-App)", callback_data="dep_crypto")
         ],
         [
             InlineKeyboardButton(text="⭐ Telegram Stars", callback_data="dep_stars")
@@ -130,6 +135,33 @@ def crypto_invoice_keyboard(pay_url: str, invoice_id: int, lang: str = "en") -> 
     buttons = [
         [InlineKeyboardButton(text="💳 Pay with @CryptoBot", url=pay_url)],
         [InlineKeyboardButton(text="🔄 Check Payment", callback_data=f"check_crypto_{invoice_id}")],
+        [InlineKeyboardButton(text=t("btn_close", lang), callback_data="close_view")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def oxapay_invoice_keyboard(pay_url: str, track_id: int, lang: str = "en") -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text="💳 Open OxaPay Payment Page", url=pay_url)],
+        [InlineKeyboardButton(text="🔄 Check Payment", callback_data=f"check_oxapay_{track_id}")],
+        [InlineKeyboardButton(text=t("btn_close", lang), callback_data="close_view")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def cryptomus_invoice_keyboard(pay_url: str, uuid: str, lang: str = "en") -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text="💳 Open Cryptomus Payment Page", url=pay_url)],
+        [InlineKeyboardButton(text="🔄 Check Payment", callback_data=f"check_cryptomus_{uuid}")],
+        [InlineKeyboardButton(text=t("btn_close", lang), callback_data="close_view")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def nowpayments_invoice_keyboard(pay_url: str, payment_id: str, lang: str = "en") -> InlineKeyboardMarkup:
+    buttons = [
+        [InlineKeyboardButton(text="💳 Open NOWPayments Page", url=pay_url)],
+        [InlineKeyboardButton(text="🔄 Check Payment", callback_data=f"check_nowpayments_{payment_id}")],
         [InlineKeyboardButton(text=t("btn_close", lang), callback_data="close_view")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)

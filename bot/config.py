@@ -31,8 +31,13 @@ DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///nexus_hub.db"
 BASE_CURRENCY: str = os.getenv("BASE_CURRENCY", "USD").upper().strip()
 CURRENCY_SYMBOL: str = "$" if BASE_CURRENCY == "USD" else f" {BASE_CURRENCY} "
 
-# International & Global Payments
+# International & Global Crypto Gateways
+OXAPAY_API_KEY: str = os.getenv("OXAPAY_API_KEY", "").strip()
+CRYPTOMUS_MERCHANT_ID: str = os.getenv("CRYPTOMUS_MERCHANT_ID", "").strip()
+CRYPTOMUS_PAYMENT_KEY: str = os.getenv("CRYPTOMUS_PAYMENT_KEY", "").strip()
+NOWPAYMENTS_API_KEY: str = os.getenv("NOWPAYMENTS_API_KEY", "").strip()
 CRYPTO_PAY_TOKEN: str = os.getenv("CRYPTO_PAY_TOKEN", "").strip()
+
 STARS_RATE_USD: float = float(os.getenv("STARS_RATE_USD", "0.02"))  # 1 Telegram Star = $0.02 (50 Stars = $1.00)
 MIN_DEPOSIT_AMOUNT: float = float(os.getenv("MIN_DEPOSIT_AMOUNT", "1.0" if BASE_CURRENCY == "USD" else "20"))
 MAX_DEPOSIT_AMOUNT: float = float(os.getenv("MAX_DEPOSIT_AMOUNT", "5000.0" if BASE_CURRENCY == "USD" else "50000"))
