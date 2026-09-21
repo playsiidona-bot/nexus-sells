@@ -28,9 +28,10 @@ class ForceJoinMiddleware(BaseMiddleware):
         maintenance_active = await get_setting("maintenance_mode", "0") == "1"
         if maintenance_active and not is_admin_user:
             maint_msg = (
-                "🛠️ <b>ቦቱ በአሁኑ ሰዓት በማሻሻያ ላይ ይገኛል (Under Maintenance)</b>\n\n"
-                "አዳዲስ አገልግሎቶችን እያካተትን ስለሆነ እባክዎ ጥቂት ቆይተው እንደገና ይሞክሩ።\n\n"
-                "<i>The bot is currently undergoing scheduled maintenance. Please check back shortly.</i>"
+                "<b>SYSTEM MAINTENANCE IN PROGRESS</b>\n"
+                "────────────────────────\n"
+                "The store network is currently undergoing scheduled maintenance. Please check back shortly.\n\n"
+                "<i>ቦቱ በአሁኑ ሰዓት በማሻሻያ ላይ ይገኛል፣ እባክዎ ጥቂት ቆይተው እንደገና ይሞክሩ።</i>"
             )
             if isinstance(event, Message):
                 await event.answer(maint_msg, parse_mode="HTML")
@@ -69,24 +70,25 @@ class ForceJoinMiddleware(BaseMiddleware):
                             pass
 
                     if link:
-                        unjoined_buttons.append([InlineKeyboardButton(text=f"📢 Join Channel", url=link)])
+                        unjoined_buttons.append([InlineKeyboardButton(text="[ Join Required Channel ]", url=link, style="primary")])
             except Exception as e:
                 # If bot cannot check membership (not admin or invalid ID), gracefully bypass
                 logger.warning(f"Force join bypass for channel {ch}: {e}")
 
         if unjoined_buttons:
-            unjoined_buttons.append([InlineKeyboardButton(text="🔄 Verify / አረጋግጥ", callback_data="check_join")])
+            unjoined_buttons.append([InlineKeyboardButton(text="[ Verify Membership / አረጋግጥ ]", callback_data="check_join", style="success")])
             msg_text = (
-                "📢 <b>Join Our Official Channel to Continue</b>\n\n"
-                "Please join our required community channel below, then click <b>Verify</b> to access the store.\n\n"
-                "<i>⚠️ ቦቱን ለመጠቀም እባክዎ መጀመሪያ ቻናላችንን ይቀላቀሉ።</i>"
+                "<b>CHANNEL SUBSCRIPTION REQUIRED</b>\n"
+                "────────────────────────\n"
+                "Please subscribe to our community channel below, then click <b>Verify</b> to enter the store.\n\n"
+                "<i>ቦቱን ለመጠቀም እባክዎ መጀመሪያ ቻናላችንን ይቀላቀሉ።</i>"
             )
             kb = InlineKeyboardMarkup(inline_keyboard=unjoined_buttons)
             if isinstance(event, Message):
                 await event.answer(msg_text, reply_markup=kb, parse_mode="HTML")
             elif isinstance(event, CallbackQuery):
                 if event.data == "check_join":
-                    await event.answer("⚠️ You have not joined all channels yet! Please join to continue.", show_alert=True)
+                    await event.answer("Please join the required channel first before verifying.", show_alert=True)
                 else:
                     await event.message.answer(msg_text, reply_markup=kb, parse_mode="HTML")
                     await event.answer()

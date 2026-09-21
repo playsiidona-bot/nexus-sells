@@ -182,7 +182,7 @@ async def handle_product_reviews(call: CallbackQuery):
         )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="< Back to Product", callback_data=f"prod_{prod_id}")]
+        [InlineKeyboardButton(text="< Back to Product", callback_data=f"prod_{prod_id}", style="primary")]
     ])
     await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await call.answer()

@@ -101,5 +101,5 @@ async def close_message(call: CallbackQuery):
 @router.callback_query(F.data == "check_join")
 async def check_channel_join(call: CallbackQuery):
     await call.message.delete()
-    await call.message.answer("✅ እናመሰግናለን! አሁን ቦቱን መጠቀም ይችላሉ።\nለመጀመር /start ይጫኑ።")
+    await call.message.answer("<b>እናመሰግናለን!</b> አሁን ቦቱን መጠቀም ይችላሉ።\nለመጀመር /start ይጫኑ።", parse_mode="HTML")
     await call.answer()
