@@ -32,6 +32,7 @@ class Category(Base):
     name = Column(String(128), unique=True, nullable=False)
     icon = Column(String(16), default="📦")
     display_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)  # Allows hiding or showing category
 
     products = relationship("Product", back_populates="category", cascade="all, delete-orphan")
 

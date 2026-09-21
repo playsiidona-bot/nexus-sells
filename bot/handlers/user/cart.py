@@ -1,6 +1,7 @@
 from typing import Any
 from decimal import Decimal
 from aiogram import Router, F
+from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from bot.database.crud import (
     get_cart, update_cart_qty, clear_cart, checkout_cart_atomic, get_user_by_id
@@ -32,10 +33,24 @@ async def render_cart_view(user_id: int) -> tuple[str, Any]:
     return text, kb
 
 
+@router.message(Command("cart"))
+@router.message(Command("ዘንቢል"))
 @router.message(F.text.in_(["Shopping Cart", "የግዢ ዘንቢል", "[ Shopping Cart ]", "[ የግዢ ዘንቢል ]", "🛒 My Cart", "🛒 የእኔ ዘንቢል (Cart)"]))
 async def view_cart_message(message: Message):
     text, kb = await render_cart_view(message.from_user.id)
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "refresh_cart")
+async def refresh_cart_cb(call: CallbackQuery):
+    text, kb = await render_cart_view(call.from_user.id)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    user = await get_user_by_id(call.from_user.id)
+    lang = user.language if user else "en"
+    await call.answer("Cart updated" if lang == "en" else "ዘንቢል ታድሷል")
 
 
 @router.callback_query(F.data.startswith("cart_inc_"))

@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
@@ -13,14 +14,19 @@ from bot.database.crud import (
     get_ticket_by_code, replace_key_for_ticket, refund_ticket, reject_ticket,
     get_product_by_id, get_setting, set_setting, sync_aiverse_products,
     get_pending_api_products, get_approved_api_products, update_api_product_review,
-    delete_product, get_all_categories, create_product
+    delete_product, get_all_categories, create_product, get_category_by_id,
+    update_category, delete_category, get_all_products, update_product_details,
+    get_payment_receipt_by_id, update_payment_receipt, add_user_balance
 )
 from bot.keyboards.inline import (
     admin_main_keyboard, admin_settings_keyboard, admin_api_menu_keyboard,
     admin_pending_api_list_keyboard, admin_api_item_review_keyboard,
     admin_categories_select_keyboard, admin_api_keys_keyboard,
     admin_add_prod_category_keyboard, admin_add_prod_skip_desc_keyboard,
-    admin_add_prod_delivery_keyboard, admin_add_prod_input_keyboard
+    admin_add_prod_delivery_keyboard, admin_add_prod_input_keyboard,
+    admin_category_manager_keyboard, admin_category_detail_keyboard,
+    admin_product_manager_keyboard, admin_product_detail_keyboard,
+    admin_usdt_wallets_keyboard
 )
 from bot.services.aiverse_client import aiverse_client
 from bot.config import (
@@ -31,6 +37,7 @@ from bot.config import (
     CRYPTOMUS_PAYMENT_KEY, CRYPTOMUS_MERCHANT_ID, NOWPAYMENTS_API_KEY
 )
 
+logger = logging.getLogger(__name__)
 router = Router()
 
 
@@ -55,6 +62,15 @@ class AdminStates(StatesGroup):
     waiting_new_prod_price = State()
     waiting_new_prod_placeholder = State()
     waiting_new_prod_inf_val = State()
+    # Edit category and product states
+    waiting_edit_cat_name = State()
+    waiting_edit_prod_title = State()
+    waiting_edit_prod_price = State()
+    waiting_edit_prod_desc = State()
+    # USDT Wallets & manual approval
+    waiting_usdt_polygon_addr = State()
+    waiting_usdt_bep20_addr = State()
+    waiting_appr_deposit_amount = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -1129,5 +1145,634 @@ async def test_aiverse_connection(call: CallbackQuery):
     bal = res.get("wallet_balance", 0.0)
     first_name = res.get("first_name", "Supplier Account")
     await call.answer(f"Success! Connected to {first_name} | Balance: ${bal:.2f}", show_alert=True)
+
+
+# =====================================================================
+# CATEGORY MANAGEMENT (EDIT, HIDE/SHOW, DELETE)
+# =====================================================================
+
+@router.callback_query(F.data == "adm_cats_mgr")
+async def admin_categories_list(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    categories = await get_all_categories(active_only=False)
+    text = (
+        "<b>CATEGORY MANAGEMENT</b>\n"
+        "────────────────────────\n"
+        "Select a category below to edit its name, toggle visibility (hide/show), or delete it entirely:"
+    )
+    kb = admin_category_manager_keyboard(categories)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("adm_catdetail_"))
+async def admin_category_detail(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    cat_id = int(call.data.split("_")[2])
+    cat = await get_category_by_id(cat_id)
+    if not cat:
+        await call.answer("Category not found", show_alert=True)
+        return
+
+    status_str = "Visible in Catalog" if getattr(cat, "is_active", True) else "Hidden from Catalog"
+    text = (
+        f"<b>CATEGORY: {cat.name}</b>\n"
+        "────────────────────────\n"
+        f"• ID: <code>{cat.id}</code>\n"
+        f"• Status: <b>{status_str}</b>\n\n"
+        "Choose an action below:"
+    )
+    kb = admin_category_detail_keyboard(cat)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("adm_cattoggle_"))
+async def admin_category_toggle(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    cat_id = int(call.data.split("_")[2])
+    cat = await get_category_by_id(cat_id)
+    if not cat:
+        await call.answer("Category not found", show_alert=True)
+        return
+
+    new_active = not getattr(cat, "is_active", True)
+    updated = await update_category(cat_id, is_active=new_active)
+    await call.answer(f"Category is now {'Visible' if new_active else 'Hidden'}")
+
+    status_str = "Visible in Catalog" if new_active else "Hidden from Catalog"
+    text = (
+        f"<b>CATEGORY: {updated.name}</b>\n"
+        "────────────────────────\n"
+        f"• ID: <code>{updated.id}</code>\n"
+        f"• Status: <b>{status_str}</b>\n\n"
+        "Choose an action below:"
+    )
+    kb = admin_category_detail_keyboard(updated)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("adm_catedit_"))
+async def admin_category_edit_prompt(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    cat_id = int(call.data.split("_")[2])
+    cat = await get_category_by_id(cat_id)
+    if not cat:
+        await call.answer("Category not found", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.waiting_edit_cat_name)
+    await state.update_data(cat_id=cat_id)
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Cancel", callback_data=f"adm_catdetail_{cat_id}", style="danger")]
+    ])
+    text = (
+        f"<b>EDIT CATEGORY NAME: {cat.name}</b>\n"
+        "────────────────────────\n"
+        "Please reply with the new name for this category:\n"
+        "<i>(or tap Cancel to abort)</i>"
+    )
+    await call.message.edit_text(text, reply_markup=cancel_kb, parse_mode="HTML")
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_edit_cat_name)
+async def admin_category_edit_save(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    new_name = (message.text or "").strip()
+    if not new_name:
+        await message.answer("Please send a valid category name.")
+        return
+
+    data = await state.get_data()
+    cat_id = data.get("cat_id")
+    await state.clear()
+
+    updated = await update_category(cat_id, name=new_name)
+    if not updated:
+        await message.answer("Category not found.")
+        return
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Back to Category", callback_data=f"adm_catdetail_{cat_id}", style="primary")],
+        [InlineKeyboardButton(text="< Categories List", callback_data="adm_cats_mgr", style="primary")]
+    ])
+    await message.answer(f"Category name updated to: <b>{new_name}</b>", reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("adm_catdel_"))
+async def admin_category_delete(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    cat_id = int(call.data.split("_")[2])
+    cat = await get_category_by_id(cat_id)
+    if not cat:
+        await call.answer("Category not found", show_alert=True)
+        return
+
+    await delete_category(cat_id)
+    await call.answer("Category deleted successfully", show_alert=True)
+
+    categories = await get_all_categories(active_only=False)
+    text = (
+        "<b>CATEGORY MANAGEMENT</b>\n"
+        "────────────────────────\n"
+        "Category was deleted. Select another category to manage:"
+    )
+    kb = admin_category_manager_keyboard(categories)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+# =====================================================================
+# PRODUCT MANAGEMENT (EDIT, HIDE/SHOW, DELETE)
+# =====================================================================
+
+@router.callback_query(F.data == "adm_prods_mgr")
+async def admin_products_list(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    products = await get_all_products(active_only=False)
+    text = (
+        "<b>PRODUCT MANAGEMENT</b>\n"
+        "────────────────────────\n"
+        "Select a product below to edit details, add stock, toggle visibility, or delete:"
+    )
+    kb = admin_product_manager_keyboard(products)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("adm_proddetail_"))
+async def admin_product_detail(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    prod_id = int(call.data.split("_")[2])
+    prod = await get_product_by_id(prod_id)
+    if not prod:
+        await call.answer("Product not found", show_alert=True)
+        return
+
+    status_str = "Visible in Catalog" if prod.is_active else "Hidden from Catalog"
+    req_input_str = f"Yes ({prod.input_label or 'Input'})" if prod.requires_input else "No"
+    text = (
+        f"<b>PRODUCT: {prod.name}</b>\n"
+        "────────────────────────\n"
+        f"• ID: <code>{prod.id}</code>\n"
+        f"• Price: <b>{CURRENCY_SYMBOL}{prod.price:.2f}</b>\n"
+        f"• Status: <b>{status_str}</b>\n"
+        f"• Delivery Type: <b>{prod.delivery_type.upper()}</b>\n"
+        f"• Custom User Input Required: <b>{req_input_str}</b>\n"
+        f"• Description: <i>{prod.description or 'None'}</i>\n\n"
+        "Choose an action below:"
+    )
+    kb = admin_product_detail_keyboard(prod)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("adm_prodtoggle_"))
+async def admin_product_toggle(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    prod_id = int(call.data.split("_")[2])
+    prod = await get_product_by_id(prod_id)
+    if not prod:
+        await call.answer("Product not found", show_alert=True)
+        return
+
+    new_active = not prod.is_active
+    updated = await update_product_details(prod_id, is_active=new_active)
+    await call.answer(f"Product is now {'Visible' if new_active else 'Hidden'}")
+
+    status_str = "Visible in Catalog" if updated.is_active else "Hidden from Catalog"
+    req_input_str = f"Yes ({updated.input_label or 'Input'})" if updated.requires_input else "No"
+    text = (
+        f"<b>PRODUCT: {updated.name}</b>\n"
+        "────────────────────────\n"
+        f"• ID: <code>{updated.id}</code>\n"
+        f"• Price: <b>{CURRENCY_SYMBOL}{updated.price:.2f}</b>\n"
+        f"• Status: <b>{status_str}</b>\n"
+        f"• Delivery Type: <b>{updated.delivery_type.upper()}</b>\n"
+        f"• Custom User Input Required: <b>{req_input_str}</b>\n"
+        f"• Description: <i>{updated.description or 'None'}</i>\n\n"
+        "Choose an action below:"
+    )
+    kb = admin_product_detail_keyboard(updated)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("adm_prodedittitle_"))
+async def admin_product_edit_title_prompt(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    prod_id = int(call.data.split("_")[2])
+    prod = await get_product_by_id(prod_id)
+    if not prod:
+        await call.answer("Product not found", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.waiting_edit_prod_title)
+    await state.update_data(prod_id=prod_id)
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Cancel", callback_data=f"adm_proddetail_{prod_id}", style="danger")]
+    ])
+    await call.message.edit_text(
+        f"<b>EDIT PRODUCT TITLE: {prod.name}</b>\n────────────────────────\nReply with the new title:",
+        reply_markup=cancel_kb,
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_edit_prod_title)
+async def admin_product_edit_title_save(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    new_title = (message.text or "").strip()
+    if not new_title:
+        await message.answer("Please send a valid product title.")
+        return
+
+    data = await state.get_data()
+    prod_id = data.get("prod_id")
+    await state.clear()
+
+    await update_product_details(prod_id, name=new_title)
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Back to Product", callback_data=f"adm_proddetail_{prod_id}", style="primary")]
+    ])
+    await message.answer(f"Product title updated to: <b>{new_title}</b>", reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("adm_prodeditprice_"))
+async def admin_product_edit_price_prompt(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    prod_id = int(call.data.split("_")[2])
+    prod = await get_product_by_id(prod_id)
+    if not prod:
+        await call.answer("Product not found", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.waiting_edit_prod_price)
+    await state.update_data(prod_id=prod_id)
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Cancel", callback_data=f"adm_proddetail_{prod_id}", style="danger")]
+    ])
+    await call.message.edit_text(
+        f"<b>EDIT PRODUCT PRICE: {prod.name}</b>\n────────────────────────\nCurrent Price: <b>{CURRENCY_SYMBOL}{prod.price:.2f}</b>\nReply with the new price (e.g. <code>4.99</code>):",
+        reply_markup=cancel_kb,
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_edit_prod_price)
+async def admin_product_edit_price_save(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    raw_val = (message.text or "").strip().replace("$", "")
+    try:
+        new_price = Decimal(raw_val)
+        if new_price < Decimal("0.01"):
+            raise ValueError
+    except Exception:
+        await message.answer("Please send a valid numeric price (e.g. <code>4.99</code>):")
+        return
+
+    data = await state.get_data()
+    prod_id = data.get("prod_id")
+    await state.clear()
+
+    await update_product_details(prod_id, price=new_price)
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Back to Product", callback_data=f"adm_proddetail_{prod_id}", style="primary")]
+    ])
+    await message.answer(f"Product price updated to: <b>{CURRENCY_SYMBOL}{new_price:.2f}</b>", reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("adm_prodeditdesc_"))
+async def admin_product_edit_desc_prompt(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    prod_id = int(call.data.split("_")[2])
+    prod = await get_product_by_id(prod_id)
+    if not prod:
+        await call.answer("Product not found", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.waiting_edit_prod_desc)
+    await state.update_data(prod_id=prod_id)
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Cancel", callback_data=f"adm_proddetail_{prod_id}", style="danger")]
+    ])
+    await call.message.edit_text(
+        f"<b>EDIT PRODUCT DESCRIPTION: {prod.name}</b>\n────────────────────────\nReply with the new description:",
+        reply_markup=cancel_kb,
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_edit_prod_desc)
+async def admin_product_edit_desc_save(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    new_desc = (message.text or "").strip()
+    data = await state.get_data()
+    prod_id = data.get("prod_id")
+    await state.clear()
+
+    await update_product_details(prod_id, description=new_desc)
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Back to Product", callback_data=f"adm_proddetail_{prod_id}", style="primary")]
+    ])
+    await message.answer("Product description updated successfully.", reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("adm_proddel_"))
+async def admin_product_delete(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+    prod_id = int(call.data.split("_")[2])
+    prod = await get_product_by_id(prod_id)
+    if not prod:
+        await call.answer("Product not found", show_alert=True)
+        return
+
+    await delete_product(prod_id)
+    await call.answer("Product deleted successfully", show_alert=True)
+
+    products = await get_all_products(active_only=False)
+    text = (
+        "<b>PRODUCT MANAGEMENT</b>\n"
+        "────────────────────────\n"
+        "Product was deleted. Select another product to manage:"
+    )
+    kb = admin_product_manager_keyboard(products)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+# =====================================================================
+# USDT WALLETS CONFIGURATION
+# =====================================================================
+
+@router.callback_query(F.data == "adm_usdt_wallets")
+async def admin_usdt_wallets_view(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        return
+
+    poly_addr = await get_setting("usdt_polygon_address", "Not Set")
+    bep_addr = await get_setting("usdt_bep20_address", "Not Set")
+
+    text = (
+        "<b>USDT DIRECT WALLETS CONFIGURATION</b>\n"
+        "────────────────────────\n"
+        "Configure direct USDT payment receiving addresses for customers:\n\n"
+        f"• <b>USDT (Polygon PoS):</b>\n<code>{poly_addr}</code>\n\n"
+        f"• <b>USDT (BEP-20 / BSC):</b>\n<code>{bep_addr}</code>\n\n"
+        "Select a network to update its receiving address:"
+    )
+    kb = admin_usdt_wallets_keyboard()
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data == "adm_set_usdt_poly")
+async def admin_set_usdt_poly_prompt(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await state.set_state(AdminStates.waiting_usdt_polygon_addr)
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Cancel", callback_data="adm_usdt_wallets", style="danger")]
+    ])
+    await call.message.edit_text(
+        "<b>SET USDT (POLYGON) ADDRESS</b>\n────────────────────────\nSend the Polygon (MATIC) receiving address:\n<i>(e.g. 0x71C... or /cancel)</i>",
+        reply_markup=cancel_kb,
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_usdt_polygon_addr)
+async def admin_save_usdt_poly(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    val = (message.text or "").strip()
+    if val.lower() == "/cancel":
+        await state.clear()
+        await message.answer("Cancelled.")
+        return
+
+    await set_setting("usdt_polygon_address", val, "USDT Polygon Deposit Address")
+    await state.clear()
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Back to USDT Wallets", callback_data="adm_usdt_wallets", style="primary")]
+    ])
+    await message.answer(f"USDT Polygon address saved:\n<code>{val}</code>", reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "adm_set_usdt_bep20")
+async def admin_set_usdt_bep20_prompt(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+    await state.set_state(AdminStates.waiting_usdt_bep20_addr)
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Cancel", callback_data="adm_usdt_wallets", style="danger")]
+    ])
+    await call.message.edit_text(
+        "<b>SET USDT (BEP-20 / BSC) ADDRESS</b>\n────────────────────────\nSend the BNB Smart Chain (BEP-20) receiving address:\n<i>(e.g. 0x71C... or /cancel)</i>",
+        reply_markup=cancel_kb,
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_usdt_bep20_addr)
+async def admin_save_usdt_bep20(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    val = (message.text or "").strip()
+    if val.lower() == "/cancel":
+        await state.clear()
+        await message.answer("Cancelled.")
+        return
+
+    await set_setting("usdt_bep20_address", val, "USDT BEP-20 Deposit Address")
+    await state.clear()
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Back to USDT Wallets", callback_data="adm_usdt_wallets", style="primary")]
+    ])
+    await message.answer(f"USDT BEP-20 address saved:\n<code>{val}</code>", reply_markup=kb, parse_mode="HTML")
+
+
+# =====================================================================
+# USDT DEPOSIT APPROVAL & REJECTION
+# =====================================================================
+
+@router.callback_query(F.data.startswith("adm_usdt_appr_"))
+async def admin_usdt_approve_prompt(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        await call.answer("Unauthorized", show_alert=True)
+        return
+
+    receipt_id = int(call.data.split("_")[3])
+    receipt = await get_payment_receipt_by_id(receipt_id)
+    if not receipt:
+        await call.answer("Receipt not found", show_alert=True)
+        return
+    if receipt.status != "pending":
+        await call.answer(f"Receipt already {receipt.status}", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.waiting_appr_deposit_amount)
+    await state.update_data(receipt_id=receipt_id, target_user_id=receipt.user_id, txid=receipt.transaction_id)
+
+    prompt = (
+        f"<b>APPROVE USDT DEPOSIT #{receipt_id}</b>\n"
+        "────────────────────────\n"
+        f"User: <code>{receipt.user_id}</code>\n"
+        f"TXID: <code>{receipt.transaction_id}</code>\n\n"
+        f"Reply with the amount in <b>{BASE_CURRENCY}</b> to credit to user's wallet:\n"
+        "<i>(e.g. <code>25.00</code>, or /cancel)</i>"
+    )
+    await call.message.reply(prompt, parse_mode="HTML")
+    await call.answer()
+
+
+@router.message(AdminStates.waiting_appr_deposit_amount)
+async def admin_usdt_approve_process(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+
+    raw_val = (message.text or "").strip().replace("$", "")
+    if raw_val.lower() == "/cancel":
+        await state.clear()
+        await message.answer("Approval cancelled.")
+        return
+
+    try:
+        amount = Decimal(raw_val)
+        if amount <= Decimal("0.00"):
+            raise ValueError
+    except Exception:
+        await message.answer("Please send a valid numeric amount (e.g. <code>25.00</code>):")
+        return
+
+    data = await state.get_data()
+    receipt_id = data.get("receipt_id")
+    target_user_id = data.get("target_user_id")
+    txid = data.get("txid")
+    await state.clear()
+
+    ok, new_balance = await add_user_balance(target_user_id, amount)
+    if not ok:
+        await message.answer("Error crediting user balance.")
+        return
+
+    await update_payment_receipt(receipt_id, status="approved", amount=amount)
+
+    await message.answer(
+        f"<b>DEPOSIT APPROVED</b>\n────────────────────────\nCredited <b>+{CURRENCY_SYMBOL}{amount:.2f}</b> to user <code>{target_user_id}</code>.\nNew Balance: <b>{CURRENCY_SYMBOL}{new_balance:.2f}</b>",
+        parse_mode="HTML"
+    )
+
+    try:
+        user_notify = (
+            "<b>USDT DEPOSIT CONFIRMED</b>\n"
+            "────────────────────────\n"
+            f"Your deposit of <b>+{CURRENCY_SYMBOL}{amount:.2f} {BASE_CURRENCY}</b> has been verified and added to your balance!\n"
+            f"TXID: <code>{txid}</code>\n"
+            f"Current Balance: <b>{CURRENCY_SYMBOL}{new_balance:.2f} {BASE_CURRENCY}</b>"
+        )
+        await message.bot.send_message(target_user_id, user_notify, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Failed to notify user {target_user_id} of deposit approval: {e}")
+
+
+@router.callback_query(F.data.startswith("adm_usdt_rej_"))
+async def admin_usdt_reject(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
+        await call.answer("Unauthorized", show_alert=True)
+        return
+
+    receipt_id = int(call.data.split("_")[3])
+    receipt = await get_payment_receipt_by_id(receipt_id)
+    if not receipt:
+        await call.answer("Receipt not found", show_alert=True)
+        return
+    if receipt.status != "pending":
+        await call.answer(f"Receipt already {receipt.status}", show_alert=True)
+        return
+
+    await update_payment_receipt(receipt_id, status="rejected")
+    await call.answer("Deposit rejected", show_alert=True)
+
+    try:
+        await call.message.edit_text(
+            f"<s>{call.message.html_text}</s>\n\n<b>REJECTED by admin @{call.from_user.username or 'N/A'}</b>",
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
+
+    try:
+        user_notify = (
+            "<b>USDT DEPOSIT REJECTED</b>\n"
+            "────────────────────────\n"
+            f"Your submitted USDT transaction hash:\n<code>{receipt.transaction_id}</code>\n"
+            "could not be verified on the blockchain. Please contact customer support if you believe this is an error."
+        )
+        await call.bot.send_message(receipt.user_id, user_notify, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Failed to notify user {receipt.user_id} of deposit rejection: {e}")
 
 

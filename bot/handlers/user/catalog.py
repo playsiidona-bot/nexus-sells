@@ -1,4 +1,5 @@
 from aiogram import Router, F
+from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from bot.database.crud import (
     get_all_categories, get_products_by_category, get_all_products, get_product_by_id,
@@ -12,12 +13,14 @@ from bot.config import BASE_CURRENCY, CURRENCY_SYMBOL
 router = Router()
 
 
+@router.message(Command("catalog"))
+@router.message(Command("ካታሎግ"))
 @router.message(F.text.in_(["Products Catalog", "የዕቃዎች ካታሎግ", "[ Products Catalog ]", "[ የዕቃዎች ካታሎግ ]", "🛍️ Products Catalog", "🛍️ የዕቃዎች ካታሎግ"]))
 async def open_catalog(message: Message):
     user = await get_user_by_id(message.from_user.id)
     lang = user.language if user else "en"
 
-    categories = await get_all_categories()
+    categories = await get_all_categories(active_only=True)
     if not categories:
         await message.answer(t("empty_catalog", lang))
         return
@@ -31,10 +34,27 @@ async def back_to_catalog(call: CallbackQuery):
     user = await get_user_by_id(call.from_user.id)
     lang = user.language if user else "en"
 
-    categories = await get_all_categories()
+    categories = await get_all_categories(active_only=True)
     kb = categories_keyboard(categories, lang)
-    await call.message.edit_text(t("catalog_title", lang), reply_markup=kb, parse_mode="HTML")
+    try:
+        await call.message.edit_text(t("catalog_title", lang), reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
     await call.answer()
+
+
+@router.callback_query(F.data == "refresh_catalog")
+async def refresh_catalog_view(call: CallbackQuery):
+    user = await get_user_by_id(call.from_user.id)
+    lang = user.language if user else "en"
+
+    categories = await get_all_categories(active_only=True)
+    kb = categories_keyboard(categories, lang)
+    try:
+        await call.message.edit_text(t("catalog_title", lang), reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer("Catalog updated" if lang == "en" else "ካታሎግ ታድሷል")
 
 
 @router.callback_query(F.data == "cat_all")
@@ -42,7 +62,7 @@ async def open_all_products(call: CallbackQuery):
     user = await get_user_by_id(call.from_user.id)
     lang = user.language if user else "en"
 
-    products = await get_all_products()
+    products = await get_all_products(active_only=True)
     if not products:
         await call.answer(t("empty_catalog", lang), show_alert=True)
         return
@@ -59,6 +79,47 @@ async def open_all_products(call: CallbackQuery):
     )
     await call.message.edit_text(header, reply_markup=kb, parse_mode="HTML")
     await call.answer()
+
+
+@router.callback_query(F.data.startswith("refresh_cat_"))
+async def refresh_category_view(call: CallbackQuery):
+    user = await get_user_by_id(call.from_user.id)
+    lang = user.language if user else "en"
+
+    cat_id = int(call.data.split("_")[2])
+    if cat_id == 0:
+        products = await get_all_products(active_only=True)
+        header = (
+            "<b>ALL AVAILABLE PRODUCTS</b>\n"
+            "────────────────────────\n"
+            "Select an item below to view specifications and purchase:"
+            if lang == "en" else
+            "<b>ሁሉም የሚገኙ ዕቃዎች</b>\n"
+            "────────────────────────\n"
+            "ዝርዝሩን ለማየት ከታች ይምረጡ፡"
+        )
+    else:
+        products = await get_products_by_category(cat_id)
+        header = (
+            "<b>PRODUCTS IN CATEGORY</b>\n"
+            "────────────────────────\n"
+            "Select an item below to view specifications and purchase:"
+            if lang == "en" else
+            "<b>በምድቡ ውስጥ ያሉ ዕቃዎች</b>\n"
+            "────────────────────────\n"
+            "ዝርዝሩን ለማየት ከታች ይምረጡ፡"
+        )
+
+    if not products:
+        await call.answer(t("empty_catalog", lang), show_alert=True)
+        return
+
+    kb = products_keyboard(products, cat_id, lang)
+    try:
+        await call.message.edit_text(header, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer("Products refreshed" if lang == "en" else "ዕቃዎች ታድሰዋል")
 
 
 @router.callback_query(F.data.startswith("cat_"))

@@ -15,6 +15,9 @@ from bot.config import (
 router = Router()
 
 
+from aiogram.filters import Command
+
+
 class ReportIssueStates(StatesGroup):
     waiting_issue_text = State()
 
@@ -23,6 +26,9 @@ class ReviewStates(StatesGroup):
     waiting_review_comment = State()
 
 
+@router.message(Command("orders"))
+@router.message(Command("order"))
+@router.message(Command("ትዕዛዝ"))
 @router.message(F.text.in_(["Order History", "የገዟቸው ዕቃዎች", "[ Order History ]", "[ የገዟቸው ዕቃዎች ]", "📦 My Orders", "📦 የገዟቸው ዕቃዎች"]))
 async def view_orders(message: Message):
     user = await get_user_by_id(message.from_user.id)
@@ -65,6 +71,33 @@ async def view_orders(message: Message):
         )
         kb = order_action_keyboard(o.id, lang)
         await message.answer(order_text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "refresh_orders")
+async def refresh_orders_callback(call: CallbackQuery):
+    user = await get_user_by_id(call.from_user.id)
+    lang = user.language if user else "en"
+    orders = await get_user_orders(call.from_user.id, limit=5)
+    if not orders:
+        await call.answer("No purchase history found.", show_alert=True)
+        return
+
+    o = orders[0]
+    c_in = getattr(o, "customer_input", None)
+    input_line = f"• Provided Target: <code>{c_in}</code>\n" if c_in else ""
+    order_text = (
+        f"<b>{o.product_name}</b> (x{o.quantity})\n"
+        f"• Order Code: <code>{o.order_code}</code>\n"
+        f"• Total Paid: <code>{CURRENCY_SYMBOL}{o.total_price:.2f}</code>\n"
+        f"{input_line}"
+        f"• Delivered Details:\n<code>{o.delivered_data or 'Fulfilled'}</code>"
+    )
+    kb = order_action_keyboard(o.id, lang)
+    try:
+        await call.message.edit_text(order_text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer("Orders refreshed!", show_alert=False)
 
 
 @router.callback_query(F.data.startswith("report_issue_"))

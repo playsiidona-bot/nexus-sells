@@ -83,35 +83,78 @@ async def add_user_balance(telegram_id: int, amount: Decimal) -> Tuple[bool, Dec
 # CATALOG & PRODUCTS
 # =====================================================================
 
-async def get_all_categories() -> List[Category]:
+async def get_all_categories(active_only: bool = False) -> List[Category]:
     async with async_session() as session:
-        stmt = select(Category).order_by(Category.display_order, Category.id)
+        stmt = select(Category)
+        if active_only:
+            stmt = stmt.where(Category.is_active == True)
+        stmt = stmt.order_by(Category.display_order, Category.id)
         res = await session.execute(stmt)
         return list(res.scalars().all())
 
 
+async def get_category_by_id(category_id: int) -> Optional[Category]:
+    async with async_session() as session:
+        stmt = select(Category).where(Category.id == category_id)
+        res = await session.execute(stmt)
+        return res.scalar_one_or_none()
+
+
+async def update_category(
+    category_id: int,
+    name: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    display_order: Optional[int] = None
+) -> Optional[Category]:
+    async with async_session() as session:
+        stmt = select(Category).where(Category.id == category_id).with_for_update()
+        cat = (await session.execute(stmt)).scalar_one_or_none()
+        if not cat:
+            return None
+        if name is not None:
+            cat.name = name
+        if is_active is not None:
+            cat.is_active = is_active
+        if display_order is not None:
+            cat.display_order = display_order
+        await session.commit()
+        await session.refresh(cat)
+        return cat
+
+
+async def delete_category(category_id: int) -> bool:
+    async with async_session() as session:
+        stmt = delete(Category).where(Category.id == category_id)
+        await session.execute(stmt)
+        await session.commit()
+        return True
+
+
 async def create_category(name: str, icon: str = "📦") -> Category:
     async with async_session() as session:
-        cat = Category(name=name, icon=icon)
+        cat = Category(name=name, icon=icon, is_active=True)
         session.add(cat)
         await session.commit()
         await session.refresh(cat)
         return cat
 
 
-async def get_products_by_category(category_id: int) -> List[Product]:
+async def get_products_by_category(category_id: int, active_only: bool = True) -> List[Product]:
     async with async_session() as session:
-        stmt = select(Product).where(
-            Product.category_id == category_id,
-            Product.is_active == True
-        ).order_by(Product.id)
+        stmt = select(Product).where(Product.category_id == category_id)
+        if active_only:
+            stmt = stmt.where(Product.is_active == True)
+        stmt = stmt.order_by(Product.id)
         res = await session.execute(stmt)
         return list(res.scalars().all())
 
 
-async def get_all_products(limit: int = 50) -> List[Product]:
+async def get_all_products(limit: int = 50, active_only: bool = True) -> List[Product]:
     async with async_session() as session:
-        stmt = select(Product).where(Product.is_active == True).order_by(Product.id).limit(limit)
+        stmt = select(Product)
+        if active_only:
+            stmt = stmt.where(Product.is_active == True)
+        stmt = stmt.order_by(Product.id).limit(limit)
         res = await session.execute(stmt)
         return list(res.scalars().all())
 
@@ -121,6 +164,32 @@ async def get_product_by_id(product_id: int) -> Optional[Product]:
         stmt = select(Product).where(Product.id == product_id)
         res = await session.execute(stmt)
         return res.scalar_one_or_none()
+
+
+async def update_product_details(
+    product_id: int,
+    name: Optional[str] = None,
+    price: Optional[Decimal] = None,
+    description: Optional[str] = None,
+    is_active: Optional[bool] = None
+) -> Optional[Product]:
+    """Admin update for standard product properties."""
+    async with async_session() as session:
+        stmt = select(Product).where(Product.id == product_id).with_for_update()
+        product = (await session.execute(stmt)).scalar_one_or_none()
+        if not product:
+            return None
+        if name is not None:
+            product.name = name
+        if price is not None:
+            product.price = price
+        if description is not None:
+            product.description = description
+        if is_active is not None:
+            product.is_active = is_active
+        await session.commit()
+        await session.refresh(product)
+        return product
 
 
 async def get_product_stock_count(product_id: int) -> int:
@@ -555,7 +624,7 @@ async def save_payment_receipt(
     sender_name: str = "",
     raw_details: str = "",
     status: str = "approved"
-) -> bool:
+) -> PaymentReceipt:
     async with async_session() as session:
         receipt = PaymentReceipt(
             user_id=user_id,
@@ -568,7 +637,30 @@ async def save_payment_receipt(
         )
         session.add(receipt)
         await session.commit()
-        return True
+        await session.refresh(receipt)
+        return receipt
+
+
+async def get_payment_receipt_by_id(receipt_id: int) -> Optional[PaymentReceipt]:
+    async with async_session() as session:
+        stmt = select(PaymentReceipt).where(PaymentReceipt.id == receipt_id)
+        res = await session.execute(stmt)
+        return res.scalar_one_or_none()
+
+
+async def update_payment_receipt(receipt_id: int, status: str, amount: Optional[Decimal] = None) -> Optional[PaymentReceipt]:
+    async with async_session() as session:
+        stmt = select(PaymentReceipt).where(PaymentReceipt.id == receipt_id)
+        res = await session.execute(stmt)
+        receipt = res.scalar_one_or_none()
+        if not receipt:
+            return None
+        receipt.status = status
+        if amount is not None:
+            receipt.amount = amount
+        await session.commit()
+        await session.refresh(receipt)
+        return receipt
 
 
 async def add_review(user_id: int, product_id: int, rating: int, comment: str = "") -> bool:

@@ -2,7 +2,8 @@ import json
 import logging
 from decimal import Decimal
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, PreCheckoutQuery, LabeledPrice
+from aiogram.filters import Command
+from aiogram.types import Message, CallbackQuery, PreCheckoutQuery, LabeledPrice, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -12,7 +13,8 @@ from bot.database.crud import (
 )
 from bot.keyboards.inline import (
     deposit_methods_keyboard, crypto_invoice_keyboard,
-    oxapay_invoice_keyboard, cryptomus_invoice_keyboard, nowpayments_invoice_keyboard
+    oxapay_invoice_keyboard, cryptomus_invoice_keyboard, nowpayments_invoice_keyboard,
+    usdt_deposit_keyboard
 )
 from bot.services.i18n import t
 from bot.services.verifier import verify_receipt_url
@@ -39,8 +41,12 @@ class DepositStates(StatesGroup):
     waiting_nowpayments_amount = State()
     waiting_stars_amount = State()
     waiting_receipt = State()
+    waiting_usdt_txid = State()
 
 
+@router.message(Command("wallet"))
+@router.message(Command("balance"))
+@router.message(Command("ዋሌት"))
 @router.message(F.text.in_(["Balance & Deposit", "ዋሌት / ሒሳብ", "[ Balance & Deposit ]", "[ ዋሌት / ሒሳብ ]", "💳 ዋሌት / ሒሳብ", "💳 Wallet / Balance", "💳 Balance / Top-Up"]))
 async def view_wallet(message: Message):
     user = await get_user_by_id(message.from_user.id)
@@ -924,3 +930,211 @@ async def process_receipt_submission(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
     await state.clear()
+
+
+# =====================================================================
+# REFRESH & NAVIGATION HANDLERS
+# =====================================================================
+
+@router.callback_query(F.data == "refresh_wallet")
+async def refresh_wallet_view(call: CallbackQuery):
+    user = await get_user_by_id(call.from_user.id)
+    lang = user.language if user else "en"
+    balance = user.balance if user else Decimal("0.00")
+
+    show_local = bool(TELEBIRR_RECEIVER_PHONE or CBE_ACCOUNT_NUMBER)
+    text = t("wallet_title", lang, balance=balance, currency=BASE_CURRENCY, user_id=call.from_user.id)
+    kb = deposit_methods_keyboard(lang=lang, show_local=show_local)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer("Balance refreshed" if lang == "en" else "ሒሳብ ታድሷል")
+
+
+@router.callback_query(F.data == "back_to_deposit")
+async def back_to_deposit_view(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    user = await get_user_by_id(call.from_user.id)
+    lang = user.language if user else "en"
+    balance = user.balance if user else Decimal("0.00")
+
+    show_local = bool(TELEBIRR_RECEIVER_PHONE or CBE_ACCOUNT_NUMBER)
+    text = t("wallet_title", lang, balance=balance, currency=BASE_CURRENCY, user_id=call.from_user.id)
+    kb = deposit_methods_keyboard(lang=lang, show_local=show_local)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data == "close_view")
+async def close_view_handler(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+    await call.answer()
+
+
+# =====================================================================
+# DIRECT USDT PAYMENTS (POLYGON & BEP-20)
+# =====================================================================
+
+@router.callback_query(F.data == "dep_usdt_polygon")
+async def dep_usdt_polygon(call: CallbackQuery):
+    user = await get_user_by_id(call.from_user.id)
+    lang = user.language if user else "en"
+
+    address = await get_setting("usdt_polygon_address", "0xYourPolygonUSDTAddressHere")
+    text = (
+        "<b>DEPOSIT USDT (POLYGON NETWORK)</b>\n"
+        "────────────────────────\n"
+        "Send USDT on the <b>Polygon (PoS) network</b> to the official store address below:\n\n"
+        f"<code>{address}</code>\n\n"
+        "• Network: <b>Polygon (PoS / MATIC)</b>\n"
+        "• Minimum Deposit: <b>$1.00</b>\n"
+        "• Once sent, tap the button below and paste your <b>Transaction Hash (TXID)</b> for rapid verification."
+        if lang == "en" else
+        "<b>USDT በPOLYGON መረብ አስገባ</b>\n"
+        "────────────────────────\n"
+        "USDT በ <b>Polygon (PoS) network</b> ወደዚህ አድራሻ ይላኩ፡\n\n"
+        f"<code>{address}</code>\n\n"
+        "• ኔትወርክ፡ <b>Polygon (PoS)</b>\n"
+        "• ዝቅተኛ ተቀማጭ፡ <b>$1.00</b>\n"
+        "• ገንዘቡን ከላኩ በኋላ ከታች ያለውን ቁልፍ በመንካት <b>የትራንዛክሽን Hash (TXID)</b> ያስገቡ።"
+    )
+    kb = usdt_deposit_keyboard("polygon", lang)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data == "dep_usdt_bep20")
+async def dep_usdt_bep20(call: CallbackQuery):
+    user = await get_user_by_id(call.from_user.id)
+    lang = user.language if user else "en"
+
+    address = await get_setting("usdt_bep20_address", "0xYourBEP20USDTAddressHere")
+    text = (
+        "<b>DEPOSIT USDT (BEP-20 / BSC)</b>\n"
+        "────────────────────────\n"
+        "Send USDT on the <b>BNB Smart Chain (BEP-20)</b> to the official store address below:\n\n"
+        f"<code>{address}</code>\n\n"
+        "• Network: <b>BNB Smart Chain (BEP-20)</b>\n"
+        "• Minimum Deposit: <b>$1.00</b>\n"
+        "• Once sent, tap the button below and paste your <b>Transaction Hash (TXID)</b> for rapid verification."
+        if lang == "en" else
+        "<b>USDT በBEP-20 (BSC) መረብ አስገባ</b>\n"
+        "────────────────────────\n"
+        "USDT በ <b>BNB Smart Chain (BEP-20)</b> ወደዚህ አድራሻ ይላኩ፡\n\n"
+        f"<code>{address}</code>\n\n"
+        "• ኔትወርክ፡ <b>BNB Smart Chain (BEP-20)</b>\n"
+        "• ዝቅተኛ ተቀማጭ፡ <b>$1.00</b>\n"
+        "• ገንዘቡን ከላኩ በኋላ ከታች ያለውን ቁልፍ በመንካት <b>የትራንዛክሽን Hash (TXID)</b> ያስገቡ።"
+    )
+    kb = usdt_deposit_keyboard("bep20", lang)
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("usdt_submit_"))
+async def start_usdt_txid_submission(call: CallbackQuery, state: FSMContext):
+    network = call.data.replace("usdt_submit_", "")
+    user = await get_user_by_id(call.from_user.id)
+    lang = user.language if user else "en"
+
+    await state.set_state(DepositStates.waiting_usdt_txid)
+    await state.update_data(network=network)
+
+    prompt = (
+        f"<b>SUBMIT USDT TRANSACTION HASH ({network.upper()})</b>\n"
+        "────────────────────────\n"
+        "Please paste the full transaction hash (TXID) of your transfer:\n\n"
+        "<i>Example: <code>0x7f9a12bc45...</code></i>"
+        if lang == "en" else
+        f"<b>የትራንዛክሽን HASH (TXID) አስገባ ({network.upper()})</b>\n"
+        "────────────────────────\n"
+        "እባክዎ የላኩበትን ሙሉ የትራንዛክሽን Hash (TXID) ይላኩ፡\n\n"
+        "<i>ምሳሌ፡ <code>0x7f9a12bc45...</code></i>"
+    )
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="< Cancel", callback_data="back_to_deposit", style="danger")]
+    ])
+    await call.message.edit_text(prompt, reply_markup=cancel_kb, parse_mode="HTML")
+    await call.answer()
+
+
+@router.message(DepositStates.waiting_usdt_txid)
+async def process_usdt_txid(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    user = await get_user_by_id(user_id)
+    lang = user.language if user else "en"
+
+    txid = (message.text or "").strip()
+    if len(txid) < 10:
+        await message.answer("Please send a valid transaction hash (TXID).")
+        return
+
+    data = await state.get_data()
+    network = data.get("network", "usdt")
+    await state.clear()
+
+    if await check_transaction_exists(txid):
+        await message.answer("This transaction hash has already been submitted or processed.")
+        return
+
+    receipt = await save_payment_receipt(
+        user_id=user_id,
+        provider=f"usdt_{network}",
+        transaction_id=txid,
+        amount=Decimal("0.00"),
+        sender_name=f"USDT ({network.upper()})",
+        raw_details=f"User @{message.from_user.username or 'N/A'} submitted TXID for {network.upper()}",
+        status="pending"
+    )
+
+    success_msg = (
+        "<b>TRANSACTION RECEIVED</b>\n"
+        "────────────────────────\n"
+        f"Your USDT ({network.upper()}) transaction hash has been submitted:\n"
+        f"<code>{txid}</code>\n\n"
+        "Our team will verify the blockchain confirmation shortly. Your balance will update automatically upon verification."
+        if lang == "en" else
+        "<b>ትራንዛክሽኑ ደርሷል</b>\n"
+        "────────────────────────\n"
+        f"የ USDT ({network.upper()}) የትራንዛክሽን Hash ተልኳል፡\n"
+        f"<code>{txid}</code>\n\n"
+        "ቡድናችን በብሎክቼይን ላይ እንደተረጋገጠ ሒሳብዎን ወዲያውኑ ይጨምራል።"
+    )
+    await message.answer(success_msg, parse_mode="HTML")
+
+    targets = get_channel_list(PAYMENTS_CHANNEL_ID or LOGS_CHANNEL_ID)
+    receipt_id = receipt.id if hasattr(receipt, "id") else 0
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Approve Deposit", callback_data=f"adm_usdt_appr_{receipt_id}", style="success"),
+            InlineKeyboardButton(text="Reject Deposit", callback_data=f"adm_usdt_rej_{receipt_id}", style="danger")
+        ]
+    ])
+    admin_alert = (
+        "<b>NEW USDT DEPOSIT SUBMISSION</b>\n"
+        "────────────────────────\n"
+        f"Receipt ID: <code>#{receipt_id}</code>\n"
+        f"User: <code>{user_id}</code> (@{message.from_user.username or 'N/A'})\n"
+        f"Network: <b>{network.upper()}</b>\n"
+        f"TXID: <code>{txid}</code>\n\n"
+        "Tap 'Approve Deposit' to verify and credit amount, or 'Reject Deposit' to decline."
+    )
+    for ch in targets:
+        try:
+            await message.bot.send_message(ch, admin_alert, reply_markup=admin_kb, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Failed to send USDT deposit alert to channel {ch}: {e}")
