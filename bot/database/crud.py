@@ -911,12 +911,16 @@ async def get_setting(key: str, default: str = "") -> str:
     if key in _SETTINGS_CACHE:
         return _SETTINGS_CACHE[key]
 
-    async with async_session() as session:
-        stmt = select(BotSetting.value).where(BotSetting.key == key)
-        val = (await session.execute(stmt)).scalar_one_or_none()
-        if val is not None:
-            _SETTINGS_CACHE[key] = val
-            return val
+    try:
+        async with async_session() as session:
+            stmt = select(BotSetting.value).where(BotSetting.key == key)
+            val = (await session.execute(stmt)).scalar_one_or_none()
+            if val is not None:
+                _SETTINGS_CACHE[key] = val
+                return val
+            return default
+    except Exception as e:
+        logger.warning(f"Error reading setting '{key}': {e}")
         return default
 
 

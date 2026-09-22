@@ -77,42 +77,53 @@ async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncS
 
 async def init_db():
     """Create all tables if they don't exist and run safe schema updates."""
+    # 1. Create all base tables in an isolated transaction so they commit cleanly
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # 2. Run safe incremental column additions without aborting table creation
+    if "sqlite" in str(engine.url):
         product_cols = [
             ("wholesale_price", "NUMERIC(12, 2) DEFAULT 0.00"),
             ("api_stock", "INTEGER DEFAULT 0"),
-            ("requires_input", "BOOLEAN DEFAULT FALSE"),
+            ("requires_input", "BOOLEAN DEFAULT 0"),
             ("input_placeholder", "VARCHAR(128) DEFAULT '@username'"),
             ("input_label", "VARCHAR(256) DEFAULT 'Target Account / Username'")
         ]
         for col_name, col_def in product_cols:
             try:
-                await conn.execute(text(f"ALTER TABLE products ADD COLUMN {col_name} {col_def}"))
+                async with engine.begin() as conn:
+                    await conn.execute(text(f"ALTER TABLE products ADD COLUMN {col_name} {col_def}"))
             except Exception:
                 pass
-
         try:
-            await conn.execute(text("ALTER TABLE orders ADD COLUMN customer_input TEXT"))
+            async with engine.begin() as conn:
+                await conn.execute(text("ALTER TABLE orders ADD COLUMN customer_input TEXT"))
         except Exception:
             pass
-
         try:
-            await conn.execute(text("ALTER TABLE categories ADD COLUMN is_active BOOLEAN DEFAULT TRUE"))
+            async with engine.begin() as conn:
+                await conn.execute(text("ALTER TABLE categories ADD COLUMN is_active BOOLEAN DEFAULT 1"))
         except Exception:
             pass
-
         try:
-            await conn.execute(text("ALTER TABLE payment_receipts ADD COLUMN receipt_url TEXT"))
+            async with engine.begin() as conn:
+                await conn.execute(text("ALTER TABLE payment_receipts ADD COLUMN receipt_url TEXT"))
         except Exception:
             pass
-
+    else:
+        # PostgreSQL / Supabase natively supports ADD COLUMN IF NOT EXISTS
         try:
-            await conn.execute(text(
-                "UPDATE products SET description = 'Official digital activation service with automated instant delivery.' "
-                "WHERE description LIKE '%Supplier ID%' OR description LIKE '%Wholesale Cost%'"
-            ))
-        except Exception:
-            pass
+            async with engine.begin() as conn:
+                await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC(12, 2) DEFAULT 0.00"))
+                await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS api_stock INTEGER DEFAULT 0"))
+                await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS requires_input BOOLEAN DEFAULT FALSE"))
+                await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS input_placeholder VARCHAR(128) DEFAULT '@username'"))
+                await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS input_label VARCHAR(256) DEFAULT 'Target Account / Username'"))
+                await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_input TEXT"))
+                await conn.execute(text("ALTER TABLE categories ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
+                await conn.execute(text("ALTER TABLE payment_receipts ADD COLUMN IF NOT EXISTS receipt_url TEXT"))
+        except Exception as e:
+            logger.warning(f"PostgreSQL migration notice: {e}")
 
     logger.info("Database initialized successfully.")

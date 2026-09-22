@@ -49,7 +49,8 @@ async def main():
     dp = Dispatcher(storage=MemoryStorage())
 
     # 4. Register Middlewares
-    dp.update.outer_middleware(AntiFloodMiddleware())
+    dp.message.outer_middleware(AntiFloodMiddleware())
+    dp.callback_query.outer_middleware(AntiFloodMiddleware())
     dp.message.middleware(ForceJoinMiddleware())
     dp.callback_query.middleware(ForceJoinMiddleware())
 
@@ -66,7 +67,7 @@ async def main():
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
         await bot.session.close()
 

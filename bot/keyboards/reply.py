@@ -4,25 +4,24 @@ from bot.services.i18n import t
 
 def get_main_menu(lang: str = "en", is_admin: bool = False) -> ReplyKeyboardMarkup:
     """
-    Generate styled main reply keyboard using Telegram 4 button colors (Blue, Green, Red, Default).
     Clean, English-only layout without language toggles.
     """
     buttons = [
         [
-            KeyboardButton(text="Products Catalog", style="primary"),    # Blue (primary)
-            KeyboardButton(text="Shopping Cart", style="success")        # Green (success)
+            KeyboardButton(text="Products Catalog"),
+            KeyboardButton(text="Shopping Cart")
         ],
         [
-            KeyboardButton(text="Balance & Deposit", style="success"),     # Green (success)
-            KeyboardButton(text="Order History")                         # Default
+            KeyboardButton(text="Balance & Deposit"),
+            KeyboardButton(text="Order History")
         ],
         [
-            KeyboardButton(text="Affiliate Program", style="primary"),   # Blue (primary)
-            KeyboardButton(text="Customer Support")                      # Default
+            KeyboardButton(text="Affiliate Program"),
+            KeyboardButton(text="Customer Support")
         ]
     ]
     if is_admin:
-        buttons.append([KeyboardButton(text="Admin Suite", style="danger")])  # Red (danger)
+        buttons.append([KeyboardButton(text="Admin Suite")])
 
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
@@ -31,10 +30,10 @@ def get_language_menu() -> ReplyKeyboardMarkup:
     """Styled language selection keyboard (English default)."""
     buttons = [
         [
-            KeyboardButton(text="English", style="primary")
+            KeyboardButton(text="English")
         ],
         [
-            KeyboardButton(text="< Back", style="danger")
+            KeyboardButton(text="< Back")
         ]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)

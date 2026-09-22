@@ -1,4 +1,5 @@
 import re
+import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart
@@ -7,6 +8,7 @@ from bot.keyboards.reply import get_main_menu, get_language_menu
 from bot.services.i18n import t
 from bot.config import ADMIN_IDS, OWNER_ID, SUPPORT_USERNAME
 
+logger = logging.getLogger(__name__)
 router = Router()
 
 
@@ -26,18 +28,29 @@ async def cmd_start(message: Message):
             if ref_str.isdigit():
                 referrer_id = int(ref_str)
 
-    user = await get_or_create_user(
-        telegram_id=user_id,
-        username=username,
-        first_name=first_name,
-        referrer_id=referrer_id
-    )
+    try:
+        await get_or_create_user(
+            telegram_id=user_id,
+            username=username,
+            first_name=first_name,
+            referrer_id=referrer_id
+        )
+    except Exception as e:
+        logger.error(f"Error in get_or_create_user for {user_id}: {e}")
 
-    lang = "en"
     is_admin = user_id in ADMIN_IDS or user_id == OWNER_ID
 
-    custom_welcome = await get_setting("welcome_text")
-    welcome_text = custom_welcome if custom_welcome else t("welcome", "en")
+    welcome_text = None
+    try:
+        custom_welcome = await get_setting("welcome_text")
+        if custom_welcome:
+            welcome_text = custom_welcome
+    except Exception:
+        pass
+
+    if not welcome_text:
+        welcome_text = t("welcome", "en")
+
     reply_kb = get_main_menu(lang="en", is_admin=is_admin)
 
     await message.answer(welcome_text, reply_markup=reply_kb, parse_mode="HTML")

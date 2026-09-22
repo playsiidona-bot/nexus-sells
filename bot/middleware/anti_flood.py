@@ -27,7 +27,10 @@ class AntiFloodMiddleware(BaseMiddleware):
             last_time = self.last_requests.get(user_id, 0.0)
             if now - last_time < RATE_LIMIT_DELAY:
                 if isinstance(event, CallbackQuery):
-                    await event.answer("⚠️ Please slow down!", show_alert=False)
+                    try:
+                        await event.answer("⚠️ Please slow down!", show_alert=False)
+                    except Exception:
+                        pass
                 return None
             self.last_requests[user_id] = now
 
