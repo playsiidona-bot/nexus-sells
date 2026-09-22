@@ -66,8 +66,22 @@ async def main():
     logger.info("Nexus Hub Bot is now running and polling for updates!")
 
     try:
+        masked_token = f"{BOT_TOKEN[:6]}...{BOT_TOKEN[-4:]}" if len(BOT_TOKEN) > 10 else "***"
+        logger.info(f"Connecting to Telegram with token {masked_token}...")
+        me = await bot.get_me()
+        logger.info(f"Bot connected successfully as @{me.username} ({me.first_name})!")
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    except Exception as e:
+        if "unauthorized" in str(e).lower():
+            logger.error(
+                "❌ FATAL: Telegram returned 'Unauthorized' (401)! "
+                "The BOT_TOKEN in Render Environment variables is invalid or revoked. "
+                "Please get the correct token from @BotFather in Telegram and update BOT_TOKEN in Render Dashboard -> Environment."
+            )
+        else:
+            logger.error(f"Error while running bot: {e}")
+        sys.exit(1)
     finally:
         await bot.session.close()
 
